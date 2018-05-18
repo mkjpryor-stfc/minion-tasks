@@ -10,7 +10,6 @@ import yaml
 from appdirs import user_config_dir, site_config_dir
 from tabulate import tabulate
 
-from . import utils
 from .core import Job, MinionFunction
 
 
@@ -66,7 +65,6 @@ yaml.add_constructor(
     minion_function_constructor,
     yaml.SafeLoader
 )
-
 
 
 class Loader:
