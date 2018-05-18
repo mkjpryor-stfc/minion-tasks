@@ -28,5 +28,16 @@ if __name__ == "__main__":
         packages = find_packages(),
         include_package_data = True,
         zip_safe = False,
-        install_requires = [],
+        install_requires = [
+            'appdirs',
+            'tabulate',
+            'click',
+            'jinja2',
+            'pyyaml',
+            'requests',
+            'requests-cache',
+        ],
+        entry_points = {
+            'console_scripts': ['minion = minion.cli:main']
+        },
     )
