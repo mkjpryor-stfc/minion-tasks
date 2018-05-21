@@ -2,8 +2,6 @@
 Connectors for the Github API v3.
 """
 
-import functools
-
 import requests
 
 from ..core import function as minion_function
@@ -40,25 +38,14 @@ class Session:
         response.raise_for_status()
         return response.json()
 
-    @functools.lru_cache()
     def issues_assigned_to_user(self):
         return self.as_json(self._session.get(self.url("/issues")))
-
-    @classmethod
-    @functools.lru_cache()
-    def get(cls, api_token):
-        """
-        Returns a session for the given API token.
-
-        The sessions are cached based on the token.
-        """
-        return cls(api_token)
 
 
 @minion_function
 def issues_assigned_to_user(api_token):
     """
     Returns a function that ignores its arguments and returns a list of issues
-    assigned to the user that the API token is for.
+    assigned to the user.
     """
-    return lambda *args: Session.get(api_token).issues_assigned_to_user()
+    return lambda *args: Session(api_token).issues_assigned_to_user()

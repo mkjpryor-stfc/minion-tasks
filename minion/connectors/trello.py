@@ -153,7 +153,6 @@ def create_card(board_name, list_name, api_key, api_token):
     incoming item.
     """
     def func(item):
-        # Get the api session
         session = Session(api_key, api_token)
         # We don't want to modify the incoming item directly, but a shallow
         # copy is fine
@@ -196,7 +195,6 @@ def update_card(api_key, api_token):
     a dict of the updates to make.
     """
     def func(item):
-        # Get the api session
         session = Session(api_key, api_token)
         # Get the card and updates from the incoming item
         # Use shallow copies so we don't modify the incoming item

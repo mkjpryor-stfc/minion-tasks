@@ -1,5 +1,5 @@
 """
-Functions for running Minion pipelines from the command line.
+Command-line interface for running Minion jobs.
 """
 
 import importlib
@@ -14,31 +14,27 @@ from tabulate import tabulate
 from .core import Job, MinionFunction
 
 
-def minion_function_constructor(loader, node):
+def minion_function_constructor(loader, tag_suffix, node):
     """
     YAML constructor for the "minion/function" tag.
     """
     if isinstance(node, yaml.MappingNode):
-        mapping = loader.construct_mapping(node, deep = True)
-        name = mapping['name']
-        args = mapping.get('args', [])
-        kwargs = mapping.get('kwargs', {})
+        kwargs = loader.construct_mapping(node, deep = True)
     elif isinstance(node, yaml.ScalarNode):
-        name = loader.construct_scalar(node)
-        args = []
+        # A scalar node just means no kwargs
         kwargs = {}
     else:
         raise yaml.constructor.ConstructorError(
             None,
             None,
-            'Invalid usage of minion/component',
+            'Invalid usage of minion/function',
             node.start_mark
         )
     # Re-raise any errors during import/exec as ConstructorErrors
     # That way, the user gets a place in the YAML file where things went wrong
     try:
         # Load the name as a dotted path
-        module, name = name.rsplit(".", maxsplit=1)
+        module, name = tag_suffix.rsplit(".", maxsplit=1)
         func = getattr(importlib.import_module(module), name)
         # The func must be a MinionFunction
         if not isinstance(func, MinionFunction):
@@ -51,7 +47,7 @@ def minion_function_constructor(loader, node):
                 ),
                 node.start_mark
             )
-        return func(*args, **kwargs)
+        return func(**kwargs)
     except (ImportError, TypeError, AttributeError) as exc:
         raise yaml.constructor.ConstructorError(
             None,
@@ -60,9 +56,8 @@ def minion_function_constructor(loader, node):
             node.start_mark
         ) from exc
 
-# Register the constructor with the safe loader
-yaml.add_constructor(
-    'tag:yaml.org,2002:minion/function',
+yaml.add_multi_constructor(
+    'tag:yaml.org,2002:minion/function:',
     minion_function_constructor,
     yaml.SafeLoader
 )

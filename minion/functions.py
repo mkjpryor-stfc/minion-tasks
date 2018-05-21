@@ -8,17 +8,18 @@ import pprint
 import jinja2
 import yaml
 
-from .core import Terminate, function as minion_function
+from .core import function as minion_function
 
 
 @minion_function
-def compose(first, *rest):
+def compose(functions):
     """
     Returns a function that composes the given functions, i.e. the result of
     the previous function is used as the input to the next.
 
     The returned function can take any number of positional arguments.
     """
+    first, *rest = functions
     return lambda *args: functools.reduce(lambda i, f: f(i), rest, first(*args))
 
 
@@ -104,12 +105,12 @@ def identity():
 
 
 @minion_function
-def fork_join(*parts):
+def fork_join(functions):
     """
     Returns a function that executes each of the given functions for the
     incoming item and returns a tuple of the results in the same order.
     """
-    return lambda item: tuple(f(item) for f in parts)
+    return lambda item: tuple(f(item) for f in functions)
 
 
 @minion_function
