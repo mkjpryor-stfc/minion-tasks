@@ -44,7 +44,6 @@ class Session:
         response.raise_for_status()
         return response.json()
 
-    @functools.lru_cache()
     def boards(self):
         """
         Returns the boards available to the session.
@@ -56,7 +55,6 @@ class Session:
             )
         )
 
-    @functools.lru_cache()
     def cards_for_board(self, board_name):
         """
         Returns the cards for the given board name.
@@ -138,52 +136,14 @@ class Session:
             )
         return card
 
-    @classmethod
-    @functools.lru_cache()
-    def get(cls, api_key, api_token):
-        """
-        Returns a session for the given API key and token.
-
-        The sessions are cached based on the key/token.
-        """
-        return cls(api_key, api_token)
-
 
 @minion_function
-def find_board(condition, api_key, api_token):
+def cards_for_board(board_name, api_key, api_token):
     """
-    Returns a function that returns the first board that matches the given
-    condition, or ``None`` if no matching board is found.
-
-    ``condition`` receives a ``(<incoming item>, <board being compared>)`` pair
-    and should return a boolean indicating if the card is a match.
+    Returns a function that ignores its arguments and returns a list of cards
+    in the given board.
     """
-    return lambda item: next(
-        filter(
-            lambda board: condition((item, board)),
-            Session.get(api_key, api_token).boards()
-        ),
-        None
-    )
-
-
-@minion_function
-def find_card(condition, board_name, api_key, api_token):
-    """
-    Returns a function that returns the first card in the given board that
-    matches the given condition, or ``None`` if no matching card is found.
-
-    ``condition`` receives a ``(<incoming item>, <card being compared>)`` pair
-    and should return a boolean indicating if the card is a match.
-    """
-    # Return a function that will return the first matching card
-    return lambda item: next(
-        filter(
-            lambda card: condition((item, card)),
-            Session.get(api_key, api_token).cards_for_board(board_name)
-        ),
-        None
-    )
+    return lambda *args: Session(api_key, api_token).cards_for_board(board_name)
 
 
 @minion_function
@@ -194,7 +154,7 @@ def create_card(board_name, list_name, api_key, api_token):
     """
     def func(item):
         # Get the api session
-        session = Session.get(api_key, api_token)
+        session = Session(api_key, api_token)
         # We don't want to modify the incoming item directly, but a shallow
         # copy is fine
         item = copy.copy(item)
@@ -237,7 +197,7 @@ def update_card(api_key, api_token):
     """
     def func(item):
         # Get the api session
-        session = Session.get(api_key, api_token)
+        session = Session(api_key, api_token)
         # Get the card and updates from the incoming item
         # Use shallow copies so we don't modify the incoming item
         card, updates = copy.copy(item['card']), copy.copy(item['updates'])
@@ -264,4 +224,4 @@ def delete_card(api_key, api_token):
     Returns a function that deletes the Trello card corresponding to the
     incoming item. The card is returned.
     """
-    return lambda item:Session.get(api_key, api_token).delete_card(item['id'])
+    return lambda item: Session(api_key, api_token).delete_card(item['id'])

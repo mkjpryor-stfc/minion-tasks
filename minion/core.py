@@ -2,6 +2,8 @@
 Utilities for building and running Minion jobs.
 """
 
+import types
+
 
 class MinionFunction:
     """
@@ -32,15 +34,20 @@ class Terminate(RuntimeError):
 
 
 class Job:
-    def __init__(self, name, description, source, function):
+    """
+    A Minion job is just a wrapper around a function of zero arguments.
+    """
+    def __init__(self, name, description, function):
         self.name = name
         self.description = description
-        self.source = source
         self.function = function
 
     def __call__(self):
-        for item in self.source():
+        result = self.function()
+        # If the result is a generator, ensure it has run
+        if isinstance(result, types.GeneratorType):
             try:
-                self.function(item)
-            except Terminate:
+                while True:
+                    next(result)
+            except StopIteration:
                 pass

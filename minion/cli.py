@@ -4,6 +4,7 @@ Functions for running Minion pipelines from the command line.
 
 import importlib
 import pathlib
+import logging
 
 import click
 import yaml
@@ -50,7 +51,7 @@ def minion_function_constructor(loader, node):
                 ),
                 node.start_mark
             )
-        return func(*args, **kwargs) if args or kwargs else func
+        return func(*args, **kwargs)
     except (ImportError, TypeError, AttributeError) as exc:
         raise yaml.constructor.ConstructorError(
             None,
@@ -89,7 +90,8 @@ class Loader:
         for (name, path) in sorted(files.items(), key = lambda x: x[0]):
             try:
                 with path.open() as f:
-                    yield Job(name, **yaml.safe_load(f))
+                    job_spec = yaml.safe_load(f)
+                yield Job(name, job_spec['description'], job_spec['spec'])
             except (TypeError, yaml.YAMLError):
                 pass
 
@@ -101,19 +103,25 @@ class Loader:
             path = directory / "jobs" / "{}.yaml".format(name)
             if path.exists():
                 with path.open() as f:
-                    return Job(name, **yaml.safe_load(f))
+                    job_spec = yaml.safe_load(f)
+                return Job(name, job_spec['description'], job_spec['spec'])
         return None
 
 
 @click.group()
+@click.option('--debug/--no-debug', default = False, help = "Enable debug logging.")
 @click.option('-c', '--config-dir', envvar = 'MINION_CONFIG_DIR',
               type = click.Path(exists = True, file_okay = False, resolve_path = True),
               help = 'Additional configuration directory.')
 @click.pass_context
-def main(ctx, config_dir):
+def main(ctx, debug, config_dir):
     """
     Minion task importer.
     """
+    logging.basicConfig(
+        format = "[%(levelname)s] [%(name)s] %(message)s",
+        level = logging.DEBUG if debug else logging.INFO
+    )
     # Pass the minion loader as the click context object
     ctx.obj = Loader(
         *(config_dir, ) if config_dir else (),

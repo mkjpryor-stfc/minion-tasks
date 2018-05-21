@@ -57,4 +57,8 @@ class Session:
 
 @minion_function
 def issues_assigned_to_user(api_token):
-    return lambda: Session.get(api_token).issues_assigned_to_user()
+    """
+    Returns a function that ignores its arguments and returns a list of issues
+    assigned to the user that the API token is for.
+    """
+    return lambda *args: Session.get(api_token).issues_assigned_to_user()
