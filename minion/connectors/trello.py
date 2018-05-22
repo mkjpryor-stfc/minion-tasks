@@ -55,18 +55,17 @@ class Session:
             )
         )
 
-    def cards_for_board(self, board_name):
+    def find_board(self, name):
+        """
+        Finds a board by name.
+        """
+        return next((b for b in self.boards() if b['name'] == name), None)
+
+    def cards_for_board(self, board):
         """
         Returns the cards for the given board name.
         """
-        try:
-            board_id = next(
-                b['id']
-                for b in self.boards()
-                if b['name'] == board_name
-            )
-        except StopIteration:
-            raise RuntimeError(f"Could not find board '{board_name}'")
+        board_id = board['id']
         return self.as_json(
             self._session.get(
                 self.url(f"/boards/{board_id}/cards"),
@@ -143,7 +142,13 @@ def cards_for_board(board_name, api_key, api_token):
     Returns a function that ignores its arguments and returns a list of cards
     in the given board.
     """
-    return lambda *args: Session(api_key, api_token).cards_for_board(board_name)
+    def func(*args):
+        session = Session(api_key, api_token)
+        board = session.find_board(board_name)
+        if board is None:
+            raise RuntimeError(f"Could not find board with name '{board_name}'")
+        return session.cards_for_board(board)
+    return func
 
 
 @minion_function
@@ -158,12 +163,12 @@ def create_card(board_name, list_name, api_key, api_token):
         # copy is fine
         item = copy.copy(item)
         # Attach the list id for the specified list
+        board = session.find_board(board_name)
         try:
             item.update(
                 idList = next(
                     l['id']
-                    for b in session.boards() if b['name'] == board_name
-                    for l in b['lists'] if l['name'] == list_name
+                    for l in board['lists'] if l['name'] == list_name
                 )
             )
         except StopIteration:
