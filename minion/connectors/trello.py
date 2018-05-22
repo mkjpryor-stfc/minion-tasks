@@ -27,7 +27,8 @@ class Session:
             )
             return req
 
-    def __init__(self, api_key, api_token):
+    def __init__(self, name, api_key, api_token):
+        self.name = name
         self._session = requests.Session()
         self._session.auth = self.Auth(api_key, api_token)
 
@@ -55,6 +56,7 @@ class Session:
             )
         )
 
+    @functools.lru_cache()
     def find_board(self, name):
         """
         Finds a board by name.
@@ -137,13 +139,12 @@ class Session:
 
 
 @minion_function
-def cards_for_board(board_name, api_key, api_token):
+def cards_for_board(board_name, session):
     """
     Returns a function that ignores its arguments and returns a list of cards
     in the given board.
     """
     def func(*args):
-        session = Session(api_key, api_token)
         board = session.find_board(board_name)
         if board is None:
             raise RuntimeError(f"Could not find board with name '{board_name}'")
@@ -152,13 +153,12 @@ def cards_for_board(board_name, api_key, api_token):
 
 
 @minion_function
-def create_card(board_name, list_name, api_key, api_token):
+def create_card(board_name, list_name, session):
     """
     Returns a function that creates and returns a Trello card based on the
     incoming item.
     """
     def func(item):
-        session = Session(api_key, api_token)
         # We don't want to modify the incoming item directly, but a shallow
         # copy is fine
         item = copy.copy(item)
@@ -191,7 +191,7 @@ def create_card(board_name, list_name, api_key, api_token):
 
 
 @minion_function
-def update_card(api_key, api_token):
+def update_card(session):
     """
     Returns a function that updates and returns a Trello card based on the
     incoming item.
@@ -200,7 +200,6 @@ def update_card(api_key, api_token):
     a dict of the updates to make.
     """
     def func(item):
-        session = Session(api_key, api_token)
         # Get the card and updates from the incoming item
         # Use shallow copies so we don't modify the incoming item
         card, updates = copy.copy(item['card']), copy.copy(item['updates'])
@@ -222,9 +221,9 @@ def update_card(api_key, api_token):
 
 
 @minion_function
-def delete_card(api_key, api_token):
+def delete_card(session):
     """
     Returns a function that deletes the Trello card corresponding to the
     incoming item. The card is returned.
     """
-    return lambda item: Session(api_key, api_token).delete_card(item['id'])
+    return lambda item: session.delete_card(item['id'])

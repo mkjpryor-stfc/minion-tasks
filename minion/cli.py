@@ -5,6 +5,7 @@ Command-line interface for running Minion jobs.
 import importlib
 import pathlib
 import logging
+import collections
 
 import click
 import yaml
@@ -14,14 +15,34 @@ from tabulate import tabulate
 from .core import Job, MinionFunction
 
 
-class MinionYamlLoader(yaml.SafeLoader):
+class OrderedLoader(yaml.SafeLoader):
+    def construct_ordered_mapping(self, node):
+        self.flatten_mapping(node)
+        # Force a depth-first construction
+        return collections.OrderedDict(self.construct_pairs(node, deep = True))
+
+OrderedLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    OrderedLoader.construct_ordered_mapping
+)
+
+
+class MinionYamlLoader(OrderedLoader):
     """
     YAML loader that can be used to load Minion jobs which interprets the
     ``!!minion/function`` tags to load Python code.
     """
     params = {}
 
-    def construct_minion_function(self, tag_suffix, node):
+    def __init__(self, *args, **kwargs):
+        self.providers = []
+        super().__init__(*args, **kwargs)
+
+    def construct_minion_object(self, tag_name,
+                                      check_type,
+                                      type_human_name,
+                                      tag_suffix,
+                                      node):
         if isinstance(node, yaml.MappingNode):
             kwargs = self.construct_mapping(node, deep = True)
         elif isinstance(node, yaml.ScalarNode):
@@ -31,27 +52,28 @@ class MinionYamlLoader(yaml.SafeLoader):
             raise yaml.constructor.ConstructorError(
                 None,
                 None,
-                'Invalid usage of minion/function',
+                f'Invalid usage of {tag_name}',
                 node.start_mark
             )
         # Re-raise any errors during import/exec as ConstructorErrors
         # That way, the user gets a place in the YAML file where things went wrong
         try:
             # Load the name as a dotted path
-            module, name = tag_suffix.rsplit(".", maxsplit=1)
-            func = getattr(importlib.import_module(module), name)
-            # The func must be a MinionFunction
-            if not isinstance(func, MinionFunction):
+            module, name = tag_suffix.rsplit(".", maxsplit = 1)
+            factory = getattr(importlib.import_module(module), name)
+            # Verify the type is correct
+            if not isinstance(factory, check_type):
                 raise yaml.constructor.ConstructorError(
                     None,
                     None,
-                    "'{}.{}' is not a Minion function".format(
-                        func.__module__,
-                        func.__qualname__
+                    "'{}.{}' must be a {}".format(
+                        factory.__module__,
+                        factory.__qualname__,
+                        type_human_name
                     ),
                     node.start_mark
                 )
-            return func(**kwargs)
+            return factory(**kwargs)
         except (ImportError, TypeError, AttributeError) as exc:
             raise yaml.constructor.ConstructorError(
                 None,
@@ -59,6 +81,27 @@ class MinionYamlLoader(yaml.SafeLoader):
                 str(exc),
                 node.start_mark
             ) from exc
+
+    def construct_minion_function(self, tag_suffix, node):
+        return self.construct_minion_object(
+            'minion/function',
+            MinionFunction,
+            'Minion function',
+            tag_suffix,
+            node
+        )
+
+    def construct_minion_provider(self, tag_suffix, node):
+        provider = self.construct_minion_object(
+            'minion/provider',
+            object,
+            'Minion provider',
+            tag_suffix,
+            node
+        )
+        # Store the provider for later
+        self.providers.append(provider)
+        return provider
 
     def construct_minion_parameter(self, node):
         if not isinstance(node, yaml.ScalarNode):
@@ -85,59 +128,95 @@ class MinionYamlLoader(yaml.SafeLoader):
                 )
         return value
 
-    @classmethod
-    def with_params(cls, params):
-        """
-        Returns a new subclass of this loader with the given parameters.
-        """
-        loader = type('LocalLoader', (cls, ), dict(params = params))
-        loader.add_multi_constructor(
-            'tag:yaml.org,2002:minion/function:',
-            loader.construct_minion_function
-        )
-        loader.add_constructor(
-            'tag:yaml.org,2002:minion/parameter',
-            loader.construct_minion_parameter
-        )
-        return loader
+    def construct_minion_get_provider(self, node):
+        if not isinstance(node, yaml.ScalarNode):
+            raise yaml.constructor.ConstructorError(
+                None,
+                None,
+                'Invalid usage of minion/get_provider',
+                node.start_mark
+            )
+        # The scalar value is the name of the provider
+        provider_name = self.construct_scalar(node)
+        # Try to find the named provider in the list of providers
+        try:
+            return next(p for p in self.providers if p.name == provider_name)
+        except StopIteration:
+            raise yaml.constructor.ConstructorError(
+                None,
+                None,
+                f"Could not find provider '{provider_name}'",
+                node.start_mark
+            )
+
+MinionYamlLoader.add_multi_constructor(
+    'tag:yaml.org,2002:minion/function:',
+    MinionYamlLoader.construct_minion_function
+)
+MinionYamlLoader.add_multi_constructor(
+    'tag:yaml.org,2002:minion/provider:',
+    MinionYamlLoader.construct_minion_provider
+)
+MinionYamlLoader.add_constructor(
+    'tag:yaml.org,2002:minion/parameter',
+    MinionYamlLoader.construct_minion_parameter
+)
+MinionYamlLoader.add_constructor(
+    'tag:yaml.org,2002:minion/get_provider',
+    MinionYamlLoader.construct_minion_get_provider
+)
 
 
-class MinionIgnoreYamlLoader(yaml.SafeLoader):
+class MinionIgnoreYamlLoader(OrderedLoader):
     """
     YAML loader that allows a YAML file containing Minion tags to be loaded as
     if those tags were not present, but still safely.
     """
-    def construct_minion_function(self, tag_suffix, node):
-        if isinstance(node, yaml.MappingNode):
-            return self.construct_mapping(node, deep = True)
-        elif isinstance(node, yaml.ScalarNode):
-            return self.construct_scalar(node)
-        else:
-            raise yaml.constructor.ConstructorError(
-                None,
-                None,
-                'Invalid usage of minion/function',
-                node.start_mark
-            )
+    @staticmethod
+    def minion_object_constructor(tag_name):
+        def constructor(loader, tag_suffix, node):
+            if isinstance(node, yaml.MappingNode):
+                return loader.construct_mapping(node, deep = True)
+            elif isinstance(node, yaml.ScalarNode):
+                return loader.construct_scalar(node)
+            else:
+                raise yaml.constructor.ConstructorError(
+                    None,
+                    None,
+                    f'Invalid usage of {tag_name}',
+                    node.start_mark
+                )
+        return constructor
 
-    def construct_minion_parameter(self, node):
-        if isinstance(node, yaml.ScalarNode):
-            return self.construct_scalar(node)
-        else:
-            raise yaml.constructor.ConstructorError(
-                None,
-                None,
-                'Invalid usage of minion/parameter',
-                node.start_mark
-            )
+    @staticmethod
+    def minion_scalar_constructor(tag_name):
+        def constructor(loader, node):
+            if isinstance(node, yaml.ScalarNode):
+                return loader.construct_scalar(node)
+            else:
+                raise yaml.constructor.ConstructorError(
+                    None,
+                    None,
+                    f'Invalid usage of {tag_name}',
+                    node.start_mark
+                )
+        return constructor
 
 MinionIgnoreYamlLoader.add_multi_constructor(
     'tag:yaml.org,2002:minion/function:',
-    MinionIgnoreYamlLoader.construct_minion_function
+    MinionIgnoreYamlLoader.minion_object_constructor('minion/function')
+)
+MinionIgnoreYamlLoader.add_multi_constructor(
+    'tag:yaml.org,2002:minion/provider:',
+    MinionIgnoreYamlLoader.minion_object_constructor('minion/provider')
 )
 MinionIgnoreYamlLoader.add_constructor(
     'tag:yaml.org,2002:minion/parameter',
-    MinionIgnoreYamlLoader.construct_minion_parameter
+    MinionIgnoreYamlLoader.minion_scalar_constructor('minion/parameter')
+)
+MinionIgnoreYamlLoader.add_constructor(
+    'tag:yaml.org,2002:minion/get_provider',
+    MinionIgnoreYamlLoader.minion_scalar_constructor('minion/get_provider')
 )
 
 
@@ -167,7 +246,8 @@ class Loader:
         """
         Returns the job with the specified name or ``None``.
         """
-        loader = MinionYamlLoader.with_params(params)
+        # Generate a loader with the parameters bound
+        loader = type('Loader', (MinionYamlLoader, ), dict(params = params))
         for directory in self.directories:
             path = directory / f"{name}.yaml"
             if not path.exists():

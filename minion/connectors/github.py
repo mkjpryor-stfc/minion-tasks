@@ -21,7 +21,8 @@ class Session:
             })
             return req
 
-    def __init__(self, api_token):
+    def __init__(self, name, api_token):
+        self.name = name
         self._session = requests.Session()
         self._session.auth = self.Auth(api_token)
 
@@ -43,9 +44,9 @@ class Session:
 
 
 @minion_function
-def issues_assigned_to_user(api_token):
+def issues_assigned_to_user(session):
     """
     Returns a function that ignores its arguments and returns a list of issues
     assigned to the user.
     """
-    return lambda *args: Session(api_token).issues_assigned_to_user()
+    return lambda *args: session.issues_assigned_to_user()
