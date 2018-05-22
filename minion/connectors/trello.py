@@ -57,11 +57,40 @@ class Session:
         )
 
     @functools.lru_cache()
-    def find_board(self, name):
+    def find_board_by_id(self, id):
+        """
+        Finds a board by id.
+        """
+        try:
+            return self.as_json(
+                self._session.get(
+                    self.url(f"/boards/{id}"),
+                    params = { 'lists': 'open' }
+                )
+            )
+        except requests.exceptions.HTTPError:
+            raise RuntimeError(f"Could not find board with id '{id}'")
+
+    @functools.lru_cache()
+    def find_board_by_name(self, name):
         """
         Finds a board by name.
         """
-        return next((b for b in self.boards() if b['name'] == name), None)
+        try:
+            return next(b for b in self.boards() if b['name'] == name)
+        except StopIteration:
+            raise RuntimeError(f"Could not find board with name '{name}'")
+
+    def cards_assigned_to_user(self):
+        """
+        Returns the cards assigned to the user.
+        """
+        return self.as_json(
+            self._session.get(
+                self.url("/members/me/cards"),
+                params = { 'attachments': 'true', 'filter': 'visible' }
+            )
+        )
 
     def cards_for_board(self, board):
         """
@@ -139,17 +168,30 @@ class Session:
 
 
 @minion_function
+def cards_assigned_to_user(session):
+    """
+    Returns a function that ignores its arguments and returns a list of cards
+    assigned to the user.
+    """
+    return lambda *args: session.cards_assigned_to_user()[:1]
+
+
+@minion_function
 def cards_for_board(board_name, session):
     """
     Returns a function that ignores its arguments and returns a list of cards
     in the given board.
     """
-    def func(*args):
-        board = session.find_board(board_name)
-        if board is None:
-            raise RuntimeError(f"Could not find board with name '{board_name}'")
-        return session.cards_for_board(board)
-    return func
+    return lambda *args: session.cards_for_board(session.find_board_by_name(board_name))
+
+
+@minion_function
+def find_board_by_id(session):
+    """
+    Returns a function that accepts a board id as the incoming item and returns
+    the Trello board with that id. If no board exists, an exception is raised.
+    """
+    return lambda item: session.find_board_by_id(item)
 
 
 @minion_function
@@ -163,7 +205,7 @@ def create_card(board_name, list_name, session):
         # copy is fine
         item = copy.copy(item)
         # Attach the list id for the specified list
-        board = session.find_board(board_name)
+        board = session.find_board_by_name(board_name)
         try:
             item.update(
                 idList = next(
