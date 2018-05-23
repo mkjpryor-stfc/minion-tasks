@@ -1,0 +1,64 @@
+description: Import assigned issues from Github to Trello.
+
+providers:
+  - !!minion/provider:minion.connectors.github.Session
+    name: github
+    api_token: !!minion/parameter "github.api_token"
+
+  - !!minion/provider:minion.connectors.trello.Session
+    name: trello
+    api_key: !!minion/parameter "trello.api_key"
+    api_token: !!minion/parameter "trello.api_token"
+
+spec:
+  !!minion/function:minion.functions.compose
+  functions:
+    - !!minion/function:minion.connectors.github.issues_assigned_to_user
+      session: !!minion/get_provider "github"
+
+    # The output of this step is a tuple containing two iterables - (issues, cards)
+    - !!minion/function:minion.functions.fork_join
+      functions:
+        - !!minion/function:minion.functions.identity
+        - !!minion/function:minion.connectors.trello.cards_for_board
+          session: !!minion/get_provider "trello"
+          board_name: !!minion/parameter "trello.board_name"
+
+    # The output of this step is an iterable of (issue, card) tuples that pass
+    # the matcher
+    # If there is no matching card, the card is None
+    - !!minion/function:minion.functions.zip_matching
+      # The input to the matcher is an (issue, card) tuple
+      matcher:
+        !!minion/function:minion.functions.expression
+        expression: "input.0.html_url in input.1.attachments|map(attribute='url')"
+
+    # Throw away the tuples which already have a card
+    - !!minion/function:minion.functions.select
+      predicate:
+        !!minion/function:minion.functions.expression
+        expression: "input.1 is none"
+
+    # Map the remaining tuples onto a card structure
+    - !!minion/function:minion.functions.collect
+      function:
+        !!minion/function:minion.functions.template
+        template: |
+          {% set issue = input.0 -%}
+          name: >-
+            #{{ issue.number }}: {{ issue.title }}
+          attachments:
+            - "{{ issue.html_url }}"
+          labels:
+            - name: github
+              color: red
+            - name: "{{ issue.repository.full_name }}"
+              color: green
+
+    # Create a card for each of the structures
+    - !!minion/function:minion.functions.collect
+      function:
+        !!minion/function:minion.connectors.trello.create_card
+        session: !!minion/get_provider "trello"
+        board_name: !!minion/parameter "trello.board_name"
+        list_name: !!minion/parameter "trello.list_name"
