@@ -1,0 +1,76 @@
+description: Import assigned cards from Kantree to Trello.
+
+providers:
+  - !!minion/provider:minion.connectors.kantree.Session
+    name: kantree
+    api_token: !!minion/parameter "kantree.api_token"
+
+  - !!minion/provider:minion.connectors.trello.Session
+    name: trello
+    api_key: !!minion/parameter "trello.api_key"
+    api_token: !!minion/parameter "trello.api_token"
+
+spec:
+  !!minion/function:minion.functions.compose
+  functions:
+    - !!minion/function:minion.connectors.kantree.cards_assigned_to_user
+      session: !!minion/get_provider "kantree"
+
+    # Map the Kantree cards onto stuff we are interested in - title, project name and URL
+    - !!minion/function:minion.functions.collect
+      function:
+        !!minion/function:minion.functions.template
+        template: |
+          title: >-
+            {{ input.title }}
+          project: >-
+            {{ input.project.title }}
+          url: >-
+            https://kantree.io/p/{{ input.project.slug }}#{{ input.ref }}
+
+    # The output of this step is a tuple containing two iterables - (kantree cards, trello cards)
+    - !!minion/function:minion.functions.fork_join
+      functions:
+        - !!minion/function:minion.functions.identity
+        - !!minion/function:minion.connectors.trello.cards_for_board
+          session: !!minion/get_provider "trello"
+          board_name: !!minion/parameter "trello.board_name"
+
+    # The output of this step is an iterable of (issue, card) tuples that pass
+    # the matcher
+    # If there is no matching card, the card is None
+    - !!minion/function:minion.functions.zip_matching
+      # The input to the matcher is an (issue, card) tuple
+      matcher:
+        !!minion/function:minion.functions.expression
+        expression: "input.0.url in input.1.attachments|map(attribute='url')"
+
+    # Throw away the tuples which already have a card
+    - !!minion/function:minion.functions.select
+      predicate:
+        !!minion/function:minion.functions.expression
+        expression: "input.1 is none"
+
+    # Map the remaining tuples onto a card structure
+    - !!minion/function:minion.functions.collect
+      function:
+        !!minion/function:minion.functions.template
+        template: |
+          {% set card = input.0 -%}
+          name: >-
+            {{ card.title }}
+          attachments:
+            - "{{ card.url }}"
+          labels:
+            - name: kantree
+              color: red
+            - name: "{{ card.project }}"
+              color: green
+
+    # Create a card for each of the structures
+    - !!minion/function:minion.functions.collect
+      function:
+        !!minion/function:minion.connectors.trello.create_card
+        session: !!minion/get_provider "trello"
+        board_name: !!minion/parameter "trello.board_name"
+        list_name: !!minion/parameter "trello.list_name"

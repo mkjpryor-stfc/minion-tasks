@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, re
+import os
 from setuptools import setup, find_packages
 
 here = os.path.abspath(os.path.dirname(__file__))
@@ -10,10 +10,10 @@ with open(os.path.join(here, 'README.md')) as f:
 
 if __name__ == "__main__":
     setup(
-        name = 'minion-tasks',
+        name = 'minion-workflows',
         setup_requires = ['setuptools_scm'],
         use_scm_version = True,
-        description = 'Utilities for synchronising tasks between different task managers',
+        description = 'Light-weight CLI-based, configurable workflow manager.',
         long_description = README,
         classifiers = [
             "Programming Language :: Python",
