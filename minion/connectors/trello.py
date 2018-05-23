@@ -1,5 +1,5 @@
 """
-Module providing Minion components for Trello.
+Connectors for the Trello API.
 """
 
 import copy
@@ -7,10 +7,11 @@ import functools
 
 import requests
 
+from .base import Provider
 from ..core import function as minion_function
 
 
-class Session:
+class Session(Provider):
     class Auth(requests.auth.AuthBase):
         """
         Requests authentication provider for Trello API requests.
@@ -28,7 +29,7 @@ class Session:
             return req
 
     def __init__(self, name, api_key, api_token):
-        self.name = name
+        super().__init__(name)
         self._session = requests.Session()
         self._session.auth = self.Auth(api_key, api_token)
 

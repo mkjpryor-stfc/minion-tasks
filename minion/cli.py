@@ -13,6 +13,7 @@ from appdirs import user_config_dir, site_config_dir
 from tabulate import tabulate
 
 from .core import Job, MinionFunction
+from .connectors.base import Provider
 
 
 class OrderedLoader(yaml.SafeLoader):
@@ -62,11 +63,11 @@ class MinionYamlLoader(OrderedLoader):
             module, name = tag_suffix.rsplit(".", maxsplit = 1)
             factory = getattr(importlib.import_module(module), name)
             # Verify the type is correct
-            if not isinstance(factory, check_type):
+            if not check_type(factory):
                 raise yaml.constructor.ConstructorError(
                     None,
                     None,
-                    "'{}.{}' must be a {}".format(
+                    "'{}.{}' is not a {}".format(
                         factory.__module__,
                         factory.__qualname__,
                         type_human_name
@@ -85,7 +86,7 @@ class MinionYamlLoader(OrderedLoader):
     def construct_minion_function(self, tag_suffix, node):
         return self.construct_minion_object(
             'minion/function',
-            MinionFunction,
+            lambda x: isinstance(x, MinionFunction),
             'Minion function',
             tag_suffix,
             node
@@ -94,7 +95,7 @@ class MinionYamlLoader(OrderedLoader):
     def construct_minion_provider(self, tag_suffix, node):
         provider = self.construct_minion_object(
             'minion/provider',
-            object,
+            lambda x: issubclass(x, Provider),
             'Minion provider',
             tag_suffix,
             node
@@ -327,7 +328,8 @@ def merge(destination, values):
 
 
 @main.command(name = "run")
-@click.option("-f", "--params-file", type = click.File(), multiple = True,
+@click.option("-f", "--params-file", envvar = "MINION_PARAMS_FILES",
+              type = click.File(), multiple = True,
               help = "File containing parameter values (multiple allowed).")
 @click.option("-p", "--params", type = str, help = "Parameter values as a YAML string.")
 @click.argument("job_name")
