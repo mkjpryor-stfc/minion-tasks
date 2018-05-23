@@ -261,11 +261,11 @@ class Loader:
 
 @click.group()
 @click.option('--debug/--no-debug', default = False, help = "Enable debug logging.")
-@click.option('-d', '--jobs-dir', envvar = 'MINION_JOBS_DIR',
+@click.option('-d', '--job-dir', envvar = 'MINION_JOB_DIRS', multiple = True,
               type = click.Path(exists = True, file_okay = False, resolve_path = True),
-              help = 'Additional directory to search for jobs.')
+              help = 'Additional directory to search for jobs (multiple permitted).')
 @click.pass_context
-def main(ctx, debug, jobs_dir):
+def main(ctx, debug, job_dir):
     """
     Minion task importer.
     """
@@ -275,7 +275,7 @@ def main(ctx, debug, jobs_dir):
     )
     # Pass the minion loader as the click context object
     ctx.obj = Loader(
-        *(jobs_dir, ) if jobs_dir else (),
+        *job_dir,
         user_config_dir("minion"),
         site_config_dir("minion")
     )
@@ -285,7 +285,7 @@ def main(ctx, debug, jobs_dir):
 @click.pass_context
 def config_sources(ctx):
     """
-    Print the configuration sources being used in order of precedence.
+    Print the configuration sources in use.
     """
     # Just print the directories we are using
     for directory in ctx.obj.directories:
@@ -297,6 +297,9 @@ def config_sources(ctx):
               help = 'Print the job name only, one per line.')
 @click.pass_context
 def list_jobs(ctx, quiet):
+    """
+    Lists the available jobs.
+    """
     jobs = list(ctx.obj.list())
     if quiet:
         for job in jobs:
@@ -325,19 +328,23 @@ def merge(destination, values):
 
 @main.command(name = "run")
 @click.option("-f", "--params-file", type = click.File(), multiple = True,
-              help = "Files containing parameter values for the job.")
+              help = "File containing parameter values (multiple allowed).")
+@click.option("-p", "--params", type = str, help = "Parameter values as a YAML string.")
 @click.argument("job_name")
 @click.pass_context
-def run_job(ctx, params_file, job_name):
+def run_job(ctx, params_file, params, job_name):
     """
     Runs the specified job.
     """
     # Merge the parameter files in the order they were given
     # Values from later files take precedence
-    params = {}
+    merged = {}
     for f in params_file:
-        merge(params, yaml.safe_load(f))
-    job = ctx.obj.find(job_name, params)
+        merge(merged, yaml.safe_load(f))
+    # Apply any overrides from the command line
+    if params:
+        merge(merged, yaml.safe_load(params))
+    job = ctx.obj.find(job_name, merged)
     if job is None:
         click.echo("Could not find job '{}'.".format(job_name), err = True)
         raise SystemExit(1)
