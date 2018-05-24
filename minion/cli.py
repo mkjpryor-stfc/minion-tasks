@@ -2,6 +2,7 @@
 Command-line interface for running Minion jobs.
 """
 
+import os
 import importlib
 import pathlib
 import logging
@@ -277,16 +278,16 @@ def main(ctx, debug, job_dir):
     # Pass the minion loader as the click context object
     ctx.obj = Loader(
         *job_dir,
-        user_config_dir("minion"),
-        site_config_dir("minion")
+        os.path.join(user_config_dir("minion"), "jobs"),
+        os.path.join(site_config_dir("minion"), "jobs")
     )
 
 
-@main.command(name = 'config-sources')
+@main.command(name = 'job-sources')
 @click.pass_context
 def config_sources(ctx):
     """
-    Print the configuration sources in use.
+    Print the directories that will be searched for jobs.
     """
     # Just print the directories we are using
     for directory in ctx.obj.directories:

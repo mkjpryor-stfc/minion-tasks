@@ -23,8 +23,8 @@ if __name__ == "__main__":
         ],
         author = 'Matt Pryor',
         author_email = 'matt.pryor@stfc.ac.uk',
-        url = 'https://github.com/mkjpryor-stfc/minion-tasks',
-        keywords = 'task manager sync synchronise synchronize',
+        url = 'https://github.com/mkjpryor-stfc/minion-workflows',
+        keywords = 'workflow task manager import synchronise synchronize',
         packages = find_packages(),
         include_package_data = True,
         zip_safe = False,
@@ -35,7 +35,6 @@ if __name__ == "__main__":
             'jinja2',
             'pyyaml',
             'requests',
-            'requests-cache',
         ],
         entry_points = {
             'console_scripts': ['minion = minion.cli:main']
