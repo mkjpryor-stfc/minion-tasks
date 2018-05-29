@@ -70,4 +70,4 @@ def issues_for_repository(session, repository_name):
     Returns a function that ignores its arguments and returns a list of open
     issues for the given repository.
     """
-    return lambda *args: session.issues_for_repository(repository_name)[:2]
+    return lambda *args: session.issues_for_repository(repository_name)
