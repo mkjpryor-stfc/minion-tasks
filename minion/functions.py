@@ -124,23 +124,27 @@ def when(condition, then, default = identity):
 
 
 @minion_function
-def template(template):
+def template(template, globals = None):
     """
     Returns a function that evaluates the given Jinja2 template with the
-    incoming item as ``input``. The result is parsed as YAML and returned.
+    incoming item as ``input`` and the optional dictionary of globals. The
+    result is parsed as YAML and returned.
     """
+    globals = globals if globals is not None else {}
     template = jinja2.Template(template)
-    return lambda item: yaml.load(template.render(input = item))
+    return lambda item: yaml.load(template.render(input = item, **globals))
 
 
 @minion_function
-def expression(expression):
+def expression(expression, globals = None):
     """
     Returns a function that evaluates the given Jinja2 expression with the
-    incoming item as ``input`` and returns the result.
+    incoming item as ``input`` and optional dictionary of globals and returns
+    the result.
     """
+    globals = globals if globals is not None else {}
     expression = jinja2.Environment().compile_expression(expression)
-    return lambda item: expression(input = item)
+    return lambda item: expression(input = item, **globals)
 
 
 @minion_function

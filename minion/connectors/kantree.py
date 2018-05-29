@@ -137,6 +137,20 @@ class Session(Provider):
                 )
             )
 
+    @functools.lru_cache()
+    def find_project_attribute(self, project_id, name):
+        attrs = self.as_json(
+            self._session.get(self.url(f"/projects/{project_id}/attributes"))
+        )
+        return next((a for a in attrs if a['name'] == name), None)
+
+    @functools.lru_cache()
+    def find_card_model_attribute(self, model_id, name):
+        attrs = self.as_json(
+            self._session.get(self.url(f"/models/{model_id}/attributes"))
+        )
+        return next((a for a in attrs if a['name'] == name), None)
+
     def create_card(self, parent_id, card):
         """
         Creates a new card under the given parent.
@@ -156,6 +170,17 @@ class Session(Provider):
             self._session.post(
                 self.url(f"/cards/{card_id}/add-to-group"),
                 params = dict(group_id = group_id)
+            )
+        )
+
+    def append_attribute_value(self, card_id, attr_id, value):
+        """
+        Appends the given value to the specified attribute for the specified card.
+        """
+        return self.as_json(
+            self._session.post(
+                self.url(f"/cards/{card_id}/attributes/{attr_id}/append"),
+                params = dict(value = value)
             )
         )
 
@@ -188,8 +213,9 @@ def create_card(session, project_name):
     """
     def func(item):
         project = session.find_project_by_name(project_name)
-        # Pop off the groups as we will deal with them later
+        # Pop off the groups and attributes as we will deal with them later
         groups = item.pop('groups', [])
+        attributes = item.pop('attributes', [])
         # Then create a new card in the project's top-level card
         card = session.create_card(project['top_level_card_id'], item)
         # Process the groups
@@ -204,6 +230,28 @@ def create_card(session, project_name):
                 group_type['id'],
                 group_name
             )
-            card = session.add_card_to_group(card['id'], group['id'])
+            card.setdefault('groups', []).append(
+                session.add_card_to_group(card['id'], group['id'])
+            )
+        # Process the attributes
+        for a in attributes:
+            attr_name, attr_value = a['name'], a['value']
+            attr = None
+            if card['model_id'] is not None:
+                attr = session.find_card_model_attribute(
+                    card['model_id'],
+                    attr_name
+                )
+            if attr is None:
+                attr = session.find_project_attribute(
+                    card['project_id'],
+                    attr_name
+                )
+            if attr is None:
+                raise LookupError(f"Could not find attribute '{attr_name}' "
+                                   "in project '{project_name}'")
+            card.setdefault('attributes', []).append(
+                session.append_attribute_value(card['id'], attr['id'], attr_value)
+            )
         return card
     return func

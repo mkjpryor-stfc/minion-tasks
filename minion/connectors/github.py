@@ -41,7 +41,18 @@ class Session(Provider):
         return response.json()
 
     def issues_assigned_to_user(self):
+        """
+        Returns the open issues and pull requests assigned to the user.
+        """
         return self.as_json(self._session.get(self.url("/issues")))
+
+    def issues_for_repository(self, repository_name):
+        """
+        Returns the open issues and pull requests for the given repository.
+        """
+        return self.as_json(
+            self._session.get(self.url(f"/repos/{repository_name}/issues"))
+        )
 
 
 @minion_function
@@ -51,3 +62,12 @@ def issues_assigned_to_user(session):
     assigned to the user.
     """
     return lambda *args: session.issues_assigned_to_user()
+
+
+@minion_function
+def issues_for_repository(session, repository_name):
+    """
+    Returns a function that ignores its arguments and returns a list of open
+    issues for the given repository.
+    """
+    return lambda *args: session.issues_for_repository(repository_name)[:2]
