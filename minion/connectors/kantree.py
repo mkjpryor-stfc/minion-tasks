@@ -7,11 +7,10 @@ import functools
 
 import requests
 
-from .base import Provider
-from ..core import function as minion_function
+from ..core import function as minion_function, Connector
 
 
-class Session(Provider):
+class Session(Connector):
     class Auth(requests.auth.AuthBase):
         """
         Requests authentication provider for Kantree API requests.
@@ -66,7 +65,7 @@ class Session(Provider):
         try:
             return next(p for p in self.projects() if p['title'] == name)
         except StopIteration:
-            raise LookupError(f"Could not find project with name '{name}'")
+            raise LookupError(f"Could not find project '{name}'")
 
     def cards_assigned_to_user(self):
         """
@@ -220,7 +219,7 @@ def create_card(session, project_name):
         card = session.create_card(project['top_level_card_id'], item)
         # Process the groups
         for group in groups:
-            group_name, group_type_name = group['group_name'], group['group_type']
+            group_name, group_type_name = group['name'], group['type']
             group_type = session.find_or_create_group_type(
                 project['id'],
                 group_type_name

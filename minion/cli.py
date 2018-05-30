@@ -3,323 +3,338 @@ Command-line interface for running Minion jobs.
 """
 
 import os
-import importlib
 import pathlib
 import logging
-import collections
+import textwrap
 
 import click
 import yaml
-from appdirs import user_config_dir, site_config_dir
+from appdirs import user_config_dir, site_config_dir, user_data_dir
 from tabulate import tabulate
+import coolname
 
-from .core import Job, MinionFunction
-from .connectors.base import Provider
-
-
-class OrderedLoader(yaml.SafeLoader):
-    def construct_ordered_mapping(self, node):
-        self.flatten_mapping(node)
-        # Force a depth-first construction
-        return collections.OrderedDict(self.construct_pairs(node, deep = True))
-
-OrderedLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-    OrderedLoader.construct_ordered_mapping
-)
+from .core import Job, Template, Connector
 
 
-class MinionYamlLoader(OrderedLoader):
+class HierarchicalDirectoryLoader:
     """
-    YAML loader that can be used to load Minion jobs which interprets the
-    ``!!minion/function`` tags to load Python code.
+    Base class for loaders that implements the directory-searching functionality.
     """
-    params = {}
+    not_found_message = "Could not find object '{}'"
 
-    def __init__(self, *args, **kwargs):
-        self.providers = []
-        super().__init__(*args, **kwargs)
-
-    def construct_minion_object(self, tag_name,
-                                      check_type,
-                                      type_human_name,
-                                      tag_suffix,
-                                      node):
-        if isinstance(node, yaml.MappingNode):
-            kwargs = self.construct_mapping(node, deep = True)
-        elif isinstance(node, yaml.ScalarNode):
-            # A scalar node just means no kwargs
-            kwargs = {}
-        else:
-            raise yaml.constructor.ConstructorError(
-                None,
-                None,
-                f'Invalid usage of {tag_name}',
-                node.start_mark
-            )
-        # Re-raise any errors during import/exec as ConstructorErrors
-        # That way, the user gets a place in the YAML file where things went wrong
-        try:
-            # Load the name as a dotted path
-            module, name = tag_suffix.rsplit(".", maxsplit = 1)
-            factory = getattr(importlib.import_module(module), name)
-            # Verify the type is correct
-            if not check_type(factory):
-                raise yaml.constructor.ConstructorError(
-                    None,
-                    None,
-                    "'{}.{}' is not a {}".format(
-                        factory.__module__,
-                        factory.__qualname__,
-                        type_human_name
-                    ),
-                    node.start_mark
-                )
-            return factory(**kwargs)
-        except (ImportError, TypeError, AttributeError) as exc:
-            raise yaml.constructor.ConstructorError(
-                None,
-                None,
-                str(exc),
-                node.start_mark
-            ) from exc
-
-    def construct_minion_function(self, tag_suffix, node):
-        return self.construct_minion_object(
-            'minion/function',
-            lambda x: isinstance(x, MinionFunction),
-            'Minion function',
-            tag_suffix,
-            node
-        )
-
-    def construct_minion_provider(self, tag_suffix, node):
-        provider = self.construct_minion_object(
-            'minion/provider',
-            lambda x: issubclass(x, Provider),
-            'Minion provider',
-            tag_suffix,
-            node
-        )
-        # Store the provider for later
-        self.providers.append(provider)
-        return provider
-
-    def construct_minion_parameter(self, node):
-        if not isinstance(node, yaml.ScalarNode):
-            raise yaml.constructor.ConstructorError(
-                None,
-                None,
-                'Invalid usage of minion/parameter',
-                node.start_mark
-            )
-        # The scalar value is the parameter name
-        param_name = self.construct_scalar(node)
-        # It might be a dotted name that we need to traverse
-        parts = param_name.split(".")
-        value = self.params
-        while parts:
-            try:
-                value = value[parts.pop(0)]
-            except KeyError:
-                raise yaml.constructor.ConstructorError(
-                    None,
-                    None,
-                    f"Could not find parameter '{param_name}'",
-                    node.start_mark
-                )
-        return value
-
-    def construct_minion_get_provider(self, node):
-        if not isinstance(node, yaml.ScalarNode):
-            raise yaml.constructor.ConstructorError(
-                None,
-                None,
-                'Invalid usage of minion/get_provider',
-                node.start_mark
-            )
-        # The scalar value is the name of the provider
-        provider_name = self.construct_scalar(node)
-        # Try to find the named provider in the list of providers
-        try:
-            return next(p for p in self.providers if p.name == provider_name)
-        except StopIteration:
-            raise yaml.constructor.ConstructorError(
-                None,
-                None,
-                f"Could not find provider '{provider_name}'",
-                node.start_mark
-            )
-
-MinionYamlLoader.add_multi_constructor(
-    'tag:yaml.org,2002:minion/function:',
-    MinionYamlLoader.construct_minion_function
-)
-MinionYamlLoader.add_multi_constructor(
-    'tag:yaml.org,2002:minion/provider:',
-    MinionYamlLoader.construct_minion_provider
-)
-MinionYamlLoader.add_constructor(
-    'tag:yaml.org,2002:minion/parameter',
-    MinionYamlLoader.construct_minion_parameter
-)
-MinionYamlLoader.add_constructor(
-    'tag:yaml.org,2002:minion/get_provider',
-    MinionYamlLoader.construct_minion_get_provider
-)
-
-
-class MinionIgnoreYamlLoader(OrderedLoader):
-    """
-    YAML loader that allows a YAML file containing Minion tags to be loaded as
-    if those tags were not present, but still safely.
-    """
-    @staticmethod
-    def minion_object_constructor(tag_name):
-        def constructor(loader, tag_suffix, node):
-            if isinstance(node, yaml.MappingNode):
-                return loader.construct_mapping(node, deep = True)
-            elif isinstance(node, yaml.ScalarNode):
-                return loader.construct_scalar(node)
-            else:
-                raise yaml.constructor.ConstructorError(
-                    None,
-                    None,
-                    f'Invalid usage of {tag_name}',
-                    node.start_mark
-                )
-        return constructor
-
-    @staticmethod
-    def minion_scalar_constructor(tag_name):
-        def constructor(loader, node):
-            if isinstance(node, yaml.ScalarNode):
-                return loader.construct_scalar(node)
-            else:
-                raise yaml.constructor.ConstructorError(
-                    None,
-                    None,
-                    f'Invalid usage of {tag_name}',
-                    node.start_mark
-                )
-        return constructor
-
-MinionIgnoreYamlLoader.add_multi_constructor(
-    'tag:yaml.org,2002:minion/function:',
-    MinionIgnoreYamlLoader.minion_object_constructor('minion/function')
-)
-MinionIgnoreYamlLoader.add_multi_constructor(
-    'tag:yaml.org,2002:minion/provider:',
-    MinionIgnoreYamlLoader.minion_object_constructor('minion/provider')
-)
-MinionIgnoreYamlLoader.add_constructor(
-    'tag:yaml.org,2002:minion/parameter',
-    MinionIgnoreYamlLoader.minion_scalar_constructor('minion/parameter')
-)
-MinionIgnoreYamlLoader.add_constructor(
-    'tag:yaml.org,2002:minion/get_provider',
-    MinionIgnoreYamlLoader.minion_scalar_constructor('minion/get_provider')
-)
-
-
-class Loader:
-    """
-    Class that is responsible for loading jobs.
-    """
     def __init__(self, *directories):
         self.directories = tuple(map(pathlib.Path, directories))
 
+    def _from_path(self, path):
+        raise NotImplementedError
+
     def list(self):
         """
-        Returns an iterable of the available jobs.
+        Returns an iterable of the available objects.
         """
         files = {}
         for directory in reversed(self.directories):
             for path in directory.glob("*.yaml"):
                 files[path.stem] = path
         for name, path in sorted(files.items(), key = lambda x: x[0]):
-            # We only want the description, so open with a loader that ignores
-            # Minion syntax rather than bailing
-            with path.open() as f:
-                job_spec = yaml.load(f, Loader = MinionIgnoreYamlLoader)
-            yield Job(name, job_spec['description'], lambda: None)
+            yield self._from_path(path)
 
-    def find(self, name, params):
+    def find(self, name):
         """
-        Returns the job with the specified name or ``None``.
+        Returns the object with the specified name.
         """
         # Generate a loader with the parameters bound
-        loader = type('Loader', (MinionYamlLoader, ), dict(params = params))
         for directory in self.directories:
             path = directory / f"{name}.yaml"
             if not path.exists():
                 continue
-            # Use a loader that understands the Minion tags
+            return self._from_path(path)
+        else:
+            raise LookupError(self.not_found_message.format(name))
+
+
+class TemplateLoader(HierarchicalDirectoryLoader):
+    """
+    Loader for templates that searches the given directories for YAML files.
+    """
+    not_found_message = "Could not find template '{}'"
+
+    def _from_path(self, path):
+        with path.open() as f:
+            spec = yaml.safe_load(f)
+        return Template(path.stem, spec.get('description', '-'), spec['spec'])
+
+
+class JobLoader(HierarchicalDirectoryLoader):
+    """
+    Loader for jobs that searches the given directories for job definitions.
+    """
+    not_found_message = "Could not find job '{}'"
+
+    def __init__(self, template_loader, *directories):
+        self.template_loader = template_loader
+        super().__init__(*directories)
+
+    def _from_path(self, path):
+        with path.open() as f:
+            spec = yaml.safe_load(f)
+        return Job(
+            path.stem,
+            spec.get('description', '-'),
+            self.template_loader.find(spec['template']),
+            spec.get('values', {})
+        )
+
+    def save(self, job):
+        """
+        Saves the given job in the directory with the highest precedence.
+        """
+        directory = self.directories[0]
+        # Before attempting to write, ensure the directory exists
+        directory.mkdir(parents = True, exist_ok = True)
+        dest = directory / "{}.yaml".format(job.name)
+        with dest.open('w') as f:
+            yaml.dump(
+                dict(
+                    description = job.description or '',
+                    template = job.template.name,
+                    values = job.values
+                ),
+                f
+            )
+
+    def delete(self, name):
+        """
+        Removes jobs with the given name from any directory in which they exist.
+        """
+        for directory in self.directories:
+            path = directory / f"{name}.yaml"
+            if path.exists():
+                path.unlink()
+
+
+class ConnectorLoader:
+    """
+    Loader for connectors that looks for ``connectors.yaml`` in each of the
+    given directories and merges the results.
+
+    Each ``connectors.yaml`` can provide many connectors. If a connector with
+    the same name is given in multiple files, the one from the highest
+    precedence directory is used.
+    """
+    def __init__(self, *directories):
+        self.directories = tuple(map(pathlib.Path, directories))
+
+    def find_all(self):
+        """
+        Returns a dictionary of the available connectors indexed by name.
+        """
+        connectors = {}
+        # Start with the lowest-precedence directory and override as we go
+        for directory in reversed(self.directories):
+            path = directory / "connectors.yaml"
+            if not path.exists():
+                continue
             with path.open() as f:
-                job_spec = yaml.load(f, Loader = loader)
-            return Job(name, job_spec['description'], job_spec['spec'])
-        return None
+                configs = yaml.safe_load(f)
+            for name, config in configs.items():
+                connectors[name] = Connector.from_config(name, config)
+        return connectors
 
 
 @click.group()
-@click.option('--debug/--no-debug', default = False, help = "Enable debug logging.")
-@click.option('-d', '--job-dir', envvar = 'MINION_JOB_DIRS', multiple = True,
-              type = click.Path(exists = True, file_okay = False, resolve_path = True),
-              help = 'Additional directory to search for jobs (multiple permitted).')
+@click.option(
+    '--debug/--no-debug',
+    default = False,
+    help = "Enable debug logging."
+)
+@click.option(
+    '-c',
+    '--config-dir',
+    envvar = 'MINION_CONFIG_DIRS',
+    multiple = True,
+    type = click.Path(exists = True, file_okay = False, resolve_path = True),
+    help = 'Additional configuration directory (multiple permitted).'
+)
+@click.option(
+    '-d',
+    '--data-dir',
+    envvar = 'MINION_DATA_DIRS',
+    multiple = True,
+    type = click.Path(
+        exists = True,
+        writable = True,
+        file_okay = False,
+        resolve_path = True
+    ),
+    help = 'Additional data directory (multiple permitted).'
+)
 @click.pass_context
-def main(ctx, debug, job_dir):
+def main(ctx, debug, config_dir, data_dir):
     """
-    Minion task importer.
+    Minion workflow manager.
     """
     logging.basicConfig(
         format = "[%(levelname)s] [%(name)s] %(message)s",
         level = logging.DEBUG if debug else logging.INFO
     )
-    # Pass the minion loader as the click context object
-    ctx.obj = Loader(
-        *job_dir,
-        os.path.join(user_config_dir("minion"), "jobs"),
-        os.path.join(site_config_dir("minion"), "jobs")
+    ctx.obj = {}
+    ctx.obj['config_dirs'] = config_dirs = [
+        *config_dir,
+        user_config_dir("minion"),
+        site_config_dir("minion")
+    ]
+    ctx.obj['data_dirs'] = data_dirs = [
+        *data_dir,
+        user_data_dir("minion")
+    ]
+    # Construct all the required loaders
+    ctx.obj['connectors'] = ConnectorLoader(*config_dirs)
+    ctx.obj['templates'] = templates = TemplateLoader(
+        *[os.path.join(d, "templates") for d in config_dirs]
+    )
+    ctx.obj['jobs'] = JobLoader(
+        templates,
+        *[os.path.join(d, "jobs") for d in data_dirs]
     )
 
 
-@main.command(name = 'job-sources')
+@main.command(name = 'config-dirs')
 @click.pass_context
-def config_sources(ctx):
+def config_dirs(ctx):
     """
-    Print the directories that will be searched for jobs.
+    Show the configuration directories in use.
     """
-    # Just print the directories we are using
-    for directory in ctx.obj.directories:
-        click.echo(directory)
+    click.echo(':'.join(ctx.obj['config_dirs']))
 
 
-@main.command(name = "list")
-@click.option('-q', '--quiet', is_flag = True, default = False,
-              help = 'Print the job name only, one per line.')
+@main.command(name = 'data-dirs')
 @click.pass_context
-def list_jobs(ctx, quiet):
+def data_dirs(ctx):
     """
-    Lists the available jobs.
+    Show the data directories in use.
     """
-    jobs = list(ctx.obj.list())
-    if quiet:
-        for job in jobs:
-            click.echo(job.name)
-    elif jobs:
+    click.echo(':'.join(ctx.obj['data_dirs']))
+
+
+@main.group()
+def connector():
+    """
+    Commands for managing connectors.
+    """
+
+
+@main.group()
+def template():
+    """
+    Commands for managing templates.
+    """
+
+
+@main.group()
+def job():
+    """
+    Commands for managing jobs.
+    """
+
+
+@connector.command(name = "list")
+@click.pass_context
+def list_connectors(ctx):
+    """
+    List the available connectors.
+    """
+    connectors = ctx.obj['connectors'].find_all()
+    if connectors:
         click.echo(tabulate(
-            [(j.name, j.description) for j in jobs],
+            [
+                (
+                    c.name,
+                    '{}.{}'.format(type(c).__module__, type(c).__qualname__)
+                )
+                # Sort the connectors by name
+                for c in sorted(connectors.values(), key = lambda c: c.name)
+            ],
+            headers = ('Name', 'Connector'),
+            tablefmt = 'psql'
+        ))
+    else:
+        click.echo('No connectors available.')
+
+
+@template.command(name = "list")
+@click.pass_context
+def list_templates(ctx):
+    """
+    List the available templates.
+    """
+    templates = list(ctx.obj['templates'].list())
+    if templates:
+        click.echo(tabulate(
+            [(t.name, t.description) for t in templates],
             headers = ('Name', 'Description'),
+            tablefmt = 'psql'
+        ))
+    else:
+        click.echo("No templates available.")
+
+
+@template.command(name = "show")
+@click.argument('name')
+@click.pass_context
+def show_template(ctx, name):
+    """
+    Show details for the specified template.
+    """
+    try:
+        template = ctx.obj['templates'].find(name)
+    except LookupError as exc:
+        click.secho(str(exc), err = True, fg = 'red', bold = True)
+        raise SystemExit(1)
+    click.echo("Name:")
+    click.echo(textwrap.indent(template.name, '  '))
+    click.echo("Description:")
+    click.echo(
+        textwrap.indent(
+            os.linesep.join(textwrap.wrap(template.description)),
+            '  '
+        )
+    )
+    click.echo("Parameters:")
+    for param in sorted(template.parameters, key = lambda p: p.name):
+        click.echo(
+            textwrap.indent(
+                "{} ({})".format(
+                    param.name,
+                    "required" if param.default is Template.Parameter.NO_DEFAULT
+                        else "default: {}".format(param.default)
+                ),
+                "  "
+            )
+        )
+
+
+@job.command(name = "list")
+@click.pass_context
+def list_templates(ctx):
+    """
+    List the available jobs.
+    """
+    jobs = list(ctx.obj['jobs'].list())
+    if jobs:
+        click.echo(tabulate(
+            [(j.name, j.description or '-', j.template.name) for j in jobs],
+            headers = ('Name', 'Description', 'Template'),
             tablefmt = 'psql'
         ))
     else:
         click.echo("No jobs available.")
 
 
-def merge(destination, values):
+def _merge(destination, values):
     for key, value in values.items():
         if isinstance(value, dict):
-            merge(destination.setdefault(key, {}), value)
+            _merge(destination.setdefault(key, {}), value)
         elif isinstance(value, list):
             destination.setdefault(key, []).extend(value)
         elif isinstance(value, set):
@@ -328,27 +343,83 @@ def merge(destination, values):
             destination[key] = value
 
 
-@main.command(name = "run")
-@click.option("-f", "--params-file", envvar = "MINION_PARAMS_FILES",
-              type = click.File(), multiple = True,
+@job.command(name = "create")
+@click.option("-f", "--values-file", type = click.File(), multiple = True,
               help = "File containing parameter values (multiple allowed).")
-@click.option("-p", "--params", type = str, help = "Parameter values as a YAML string.")
-@click.argument("job_name")
+@click.option("--values", "values_str", type = str,
+              help = "Parameter values as a YAML string.")
+@click.option("-n", "--name", type = str,
+              default = lambda: '_'.join(coolname.generate(2)),
+              help = "A name for the job. "
+                     "If not given, a random name will be generated.")
+@click.option("--desc", default = "", help = "A short description of the job.")
+@click.argument("template_name")
 @click.pass_context
-def run_job(ctx, params_file, params, job_name):
+def create_job(ctx, values_file, values_str, name, desc, template_name):
     """
-    Runs the specified job.
+    Create a job.
     """
+    # Check if a job with the given name already exists
+    try:
+        _ = ctx.obj['jobs'].find(name)
+    except LookupError:
+        pass
+    else:
+        click.secho(
+            f"Job '{name}' already exists",
+            err = True, fg = "red", bold = True
+        )
+        raise SystemExit(1)
+    # Find the template
+    try:
+        template = ctx.obj['templates'].find(template_name)
+    except LookupError as exc:
+        click.secho(str(exc), err = True, fg = "red", bold = True)
+        raise SystemExit(1)
     # Merge the parameter files in the order they were given
     # Values from later files take precedence
-    merged = {}
-    for f in params_file:
-        merge(merged, yaml.safe_load(f))
+    values = {}
+    for f in values_file:
+        _merge(values, yaml.safe_load(f))
     # Apply any overrides from the command line
-    if params:
-        merge(merged, yaml.safe_load(params))
-    job = ctx.obj.find(job_name, merged)
-    if job is None:
-        click.echo("Could not find job '{}'.".format(job_name), err = True)
+    if values_str:
+        _merge(values, yaml.safe_load(values_str))
+    try:
+        template.check_values(values)
+    except ValueError as exc:
+        click.secho(str(exc), err = True, fg = "red", bold = True)
         raise SystemExit(1)
-    job()
+    # Create the new job and save it
+    ctx.obj['jobs'].save(Job(name, desc, template, values))
+    click.echo(f"Created job '{name}'")
+
+
+@job.command(name = "run")
+@click.argument('name')
+@click.pass_context
+def run_job(ctx, name):
+    """
+    Run a job.
+    """
+    try:
+        job = ctx.obj['jobs'].find(name)
+    except LookupError as exc:
+        click.secho(str(exc), err = True, fg = "red", bold = True)
+        raise SystemExit(1)
+    # Load the connectors
+    connectors = ctx.obj['connectors'].find_all()
+    # Run the job with the connectors
+    job.run(connectors)
+
+
+@job.command(name = "delete")
+@click.option("-f", "--force", is_flag = True, default = False,
+              help = "Suppress confirmation.")
+@click.argument('name')
+@click.pass_context
+def delete_job(ctx, force, name):
+    """
+    Delete a job.
+    """
+    if force or click.confirm("Are you sure?"):
+        ctx.obj['jobs'].delete(name)

@@ -1,0 +1,81 @@
+description: Import assigned issues from Github to Trello.
+
+spec:
+  functionRef:
+    path: minion.functions.compose
+    functions:
+      - functionRef:
+          path: minion.connectors.github.issues_assigned_to_user
+          session:
+            connectorRef:
+              parameterRef:
+                name: "github.connector_name"
+                default: "github"
+
+      # The output of this step is a tuple containing two iterables - (issues, cards)
+      - functionRef:
+          path: minion.functions.fork_join
+          functions:
+            - functionRef: { path: minion.functions.identity }
+            - functionRef:
+                path: minion.connectors.trello.cards_for_board
+                session:
+                  connectorRef:
+                    parameterRef:
+                      name: "trello.connector_name"
+                      default: "trello"
+                board_name:
+                  parameterRef: { name: "trello.board_name" }
+
+      # The output of this step is an iterable of (issue, card) tuples that pass
+      # the matcher
+      # If there is no matching card, the card is None
+      - functionRef:
+          path: minion.functions.zip_matching
+          # The input to the matcher is an (issue, card) tuple
+          matcher:
+            functionRef:
+              path: minion.functions.expression
+              expression: "input.0.html_url in input.1.attachments|map(attribute='url')"
+
+      # Throw away the tuples which already have a card
+      - functionRef:
+          path: minion.functions.select
+          predicate:
+            functionRef:
+              path: minion.functions.expression
+              expression: "input.1 is none"
+
+      # Map the remaining tuples onto a card structure
+      - functionRef:
+          path: minion.functions.collect
+          function:
+            functionRef:
+              path: minion.functions.template
+              template: |
+                {% set issue = input.0 -%}
+                name: >-
+                  #{{ issue.number }}: {{ issue.title }}
+                attachments:
+                  - "{{ issue.html_url }}"
+                labels:
+                  - name: github
+                    color: red
+                  - name: "{{ issue.repository.full_name }}"
+                    color: green
+
+      # Create a card for each of the structures
+      - functionRef:
+          path: minion.functions.collect
+          function:
+            functionRef:
+              path: minion.connectors.trello.create_card
+              session:
+                connectorRef:
+                  parameterRef:
+                    name: "trello.connector_name"
+                    default: "trello"
+              board_name:
+                parameterRef: { name: "trello.board_name" }
+              list_name:
+                parameterRef: { name: "trello.list_name" }

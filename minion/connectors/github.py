@@ -4,11 +4,10 @@ Connectors for the Github API v3.
 
 import requests
 
-from .base import Provider
-from ..core import function as minion_function
+from ..core import function as minion_function, Connector
 
 
-class Session(Provider):
+class Session(Connector):
     class Auth(requests.auth.AuthBase):
         """
         Requests authentication provider for Github API requests.

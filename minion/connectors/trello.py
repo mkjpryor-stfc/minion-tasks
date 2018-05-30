@@ -7,11 +7,10 @@ import functools
 
 import requests
 
-from .base import Provider
-from ..core import function as minion_function
+from ..core import function as minion_function, Connector
 
 
-class Session(Provider):
+class Session(Connector):
     class Auth(requests.auth.AuthBase):
         """
         Requests authentication provider for Trello API requests.
@@ -80,7 +79,7 @@ class Session(Provider):
         try:
             return next(b for b in self.boards() if b['name'] == name)
         except StopIteration:
-            raise RuntimeError(f"Could not find board with name '{name}'")
+            raise RuntimeError(f"Could not find board '{name}'")
 
     def cards_assigned_to_user(self):
         """

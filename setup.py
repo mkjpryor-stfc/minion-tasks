@@ -32,6 +32,7 @@ if __name__ == "__main__":
             'appdirs',
             'tabulate',
             'click',
+            'coolname',
             'jinja2',
             'pyyaml',
             'requests',
