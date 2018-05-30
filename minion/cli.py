@@ -279,41 +279,6 @@ def list_templates(ctx):
         click.echo("No templates available.")
 
 
-@template.command(name = "show")
-@click.argument('name')
-@click.pass_context
-def show_template(ctx, name):
-    """
-    Show details for the specified template.
-    """
-    try:
-        template = ctx.obj['templates'].find(name)
-    except LookupError as exc:
-        click.secho(str(exc), err = True, fg = 'red', bold = True)
-        raise SystemExit(1)
-    click.echo("Name:")
-    click.echo(textwrap.indent(template.name, '  '))
-    click.echo("Description:")
-    click.echo(
-        textwrap.indent(
-            os.linesep.join(textwrap.wrap(template.description)),
-            '  '
-        )
-    )
-    click.echo("Parameters:")
-    for param in sorted(template.parameters, key = lambda p: p.name):
-        click.echo(
-            textwrap.indent(
-                "{} ({})".format(
-                    param.name,
-                    "required" if param.default is Template.Parameter.NO_DEFAULT
-                        else "default: {}".format(param.default)
-                ),
-                "  "
-            )
-        )
-
-
 @job.command(name = "list")
 @click.pass_context
 def list_templates(ctx):
