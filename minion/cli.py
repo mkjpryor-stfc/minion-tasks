@@ -5,7 +5,7 @@ Command-line interface for running Minion jobs.
 import os
 import pathlib
 import logging
-import textwrap
+import functools
 
 import click
 import yaml
@@ -13,7 +13,7 @@ from appdirs import user_config_dir, site_config_dir, user_data_dir
 from tabulate import tabulate
 import coolname
 
-from .core import Job, Template, Connector
+from .core import Job, Parameter, Template, Connector
 
 
 class HierarchicalDirectoryLoader:
@@ -149,7 +149,6 @@ class ConnectorLoader:
     help = "Enable debug logging."
 )
 @click.option(
-    '-c',
     '--config-dir',
     envvar = 'MINION_CONFIG_DIRS',
     multiple = True,
@@ -157,7 +156,6 @@ class ConnectorLoader:
     help = 'Additional configuration directory (multiple permitted).'
 )
 @click.option(
-    '-d',
     '--data-dir',
     envvar = 'MINION_DATA_DIRS',
     multiple = True,
@@ -309,53 +307,92 @@ def _merge(destination, values):
 
 
 @job.command(name = "create")
-@click.option("-f", "--values-file", type = click.File(), multiple = True,
-              help = "File containing parameter values (multiple allowed).")
-@click.option("--values", "values_str", type = str,
-              help = "Parameter values as a YAML string.")
-@click.option("-n", "--name", type = str,
-              default = lambda: '_'.join(coolname.generate(2)),
-              help = "A name for the job. "
-                     "If not given, a random name will be generated.")
-@click.option("--desc", default = "", help = "A short description of the job.")
+@click.option(
+    "-n",
+    "--name",
+    type = str,
+    default = lambda: '_'.join(coolname.generate(2)),
+    help = "A name for the job. If not given, a random name will be generated."
+)
+@click.option(
+    "-f",
+    "--values-file",
+    type = click.File(),
+    multiple = True,
+    help = "YAML file containing parameter values (multiple allowed)."
+)
+@click.option(
+    "--values",
+    "values_str",
+    type = str,
+    help = "Parameter values as a YAML string."
+)
+@click.option(
+    "--description",
+    default = "",
+    help = "A brief description of the job."
+)
+@click.option(
+    "--no-input",
+    is_flag = True,
+    default = False,
+    help = "Disable interactive collection of missing values."
+)
 @click.argument("template_name")
 @click.pass_context
-def create_job(ctx, values_file, values_str, name, desc, template_name):
+def create_job(ctx, name,
+                    values_file,
+                    values_str,
+                    description,
+                    no_input,
+                    template_name):
     """
     Create a job.
     """
-    # Check if a job with the given name already exists
-    try:
-        _ = ctx.obj['jobs'].find(name)
-    except LookupError:
-        pass
-    else:
-        click.secho(
-            f"Job '{name}' already exists",
-            err = True, fg = "red", bold = True
-        )
-        raise SystemExit(1)
     # Find the template
     try:
         template = ctx.obj['templates'].find(template_name)
     except LookupError as exc:
         click.secho(str(exc), err = True, fg = "red", bold = True)
         raise SystemExit(1)
-    # Merge the parameter files in the order they were given
+    # Merge the values files in the order they were given
     # Values from later files take precedence
     values = {}
     for f in values_file:
         _merge(values, yaml.safe_load(f))
-    # Apply any overrides from the command line
+    # Merge any overrides from the command line
     if values_str:
         _merge(values, yaml.safe_load(values_str))
-    try:
-        template.check_values(values)
-    except ValueError as exc:
-        click.secho(str(exc), err = True, fg = "red", bold = True)
-        raise SystemExit(1)
+    if no_input:
+        # If we are not to collect any interactive input, check the values
+        # and bail if they are not good
+        try:
+            template.check_values(values)
+        except Parameter.Missing as exc:
+            click.secho(str(exc), err = True, fg = "red", bold = True)
+            raise SystemExit(1)
+    else:
+        # If we are collecting interactive input, collect missing values until
+        # we have a complete set of parameters
+        while True:
+            try:
+                template.check_values(values)
+            except Parameter.Missing as exc:
+                # Prompt for the missing value and merge it in
+                _merge(
+                    values,
+                    functools.reduce(
+                        lambda v, p: {p: v},
+                        reversed(exc.parameter_name.split(".")),
+                        yaml.safe_load(click.prompt(exc.parameter_name))
+                    )
+                )
+            else:
+                break
+        # If no description is given, ask for one.
+        description = click.prompt('Brief description of job')
     # Create the new job and save it
-    ctx.obj['jobs'].save(Job(name, desc, template, values))
+    ctx.obj['jobs'].save(Job(name, description, template, values))
     click.echo(f"Created job '{name}'")
 
 
@@ -386,5 +423,6 @@ def delete_job(ctx, force, name):
     """
     Delete a job.
     """
-    if force or click.confirm("Are you sure?"):
-        ctx.obj['jobs'].delete(name)
+    if not force:
+        click.confirm("Are you sure?", abort = True)
+    ctx.obj['jobs'].delete(name)
