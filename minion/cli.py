@@ -3,6 +3,7 @@ Command-line interface for running Minion jobs.
 """
 
 import os
+import sys
 import pathlib
 import logging
 import functools
@@ -278,13 +279,18 @@ def list_templates(ctx):
 
 
 @job.command(name = "list")
+@click.option('-q', '--quiet', is_flag = True, default = False,
+            help = "Print job names only, one per line.")
 @click.pass_context
-def list_templates(ctx):
+def list_jobs(ctx, quiet):
     """
     List the available jobs.
     """
     jobs = list(ctx.obj['jobs'].list())
-    if jobs:
+    if quiet:
+        for job in jobs:
+            click.echo(job.name)
+    elif jobs:
         click.echo(tabulate(
             [(j.name, j.description or '-', j.template.name) for j in jobs],
             headers = ('Name', 'Description', 'Template'),
@@ -349,6 +355,8 @@ def create_job(ctx, name,
     """
     Create a job.
     """
+    # Force no_input if not in a TTY
+    no_input = no_input or not sys.stdin.isatty()
     # Find the template
     try:
         template = ctx.obj['templates'].find(template_name)
@@ -372,6 +380,9 @@ def create_job(ctx, name,
             click.secho(str(exc), err = True, fg = "red", bold = True)
             raise SystemExit(1)
     else:
+        click.echo(template.description + "\n")
+        # If no description is given, ask for one.
+        description = click.prompt('Brief description of job')
         # If we are collecting interactive input, collect missing values until
         # we have a complete set of parameters
         while True:
@@ -389,8 +400,6 @@ def create_job(ctx, name,
                 )
             else:
                 break
-        # If no description is given, ask for one.
-        description = click.prompt('Brief description of job')
     # Create the new job and save it
     ctx.obj['jobs'].save(Job(name, description, template, values))
     click.echo(f"Created job '{name}'")
