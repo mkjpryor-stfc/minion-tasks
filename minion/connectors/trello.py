@@ -61,15 +61,12 @@ class Session(Connector):
         """
         Finds a board by id.
         """
-        try:
-            return self.as_json(
-                self._session.get(
-                    self.url(f"/boards/{id}"),
-                    params = { 'lists': 'open' }
-                )
+        return self.as_json(
+            self._session.get(
+                self.url(f"/boards/{id}"),
+                params = { 'lists': 'open' }
             )
-        except requests.exceptions.HTTPError:
-            raise RuntimeError(f"Could not find board with id '{id}'")
+        )
 
     @functools.lru_cache()
     def find_board_by_name(self, name):
@@ -79,7 +76,7 @@ class Session(Connector):
         try:
             return next(b for b in self.boards() if b['name'] == name)
         except StopIteration:
-            raise RuntimeError(f"Could not find board '{name}'")
+            raise LookupError(f"Could not find board '{name}'")
 
     def cards_assigned_to_user(self):
         """
@@ -238,25 +235,25 @@ def update_card(session):
     Returns a function that updates and returns a Trello card based on the
     incoming item.
 
-    The incoming item should be a ``{ card, updates }`` dict where updates is
-    a dict of the updates to make.
+    The incoming item should be a ``(card, updates)`` tuple where ``card`` is
+    the existing card structure and ``updates`` is a dict of the updates.
     """
     def func(item):
         # Get the card and updates from the incoming item
         # Use shallow copies so we don't modify the incoming item
-        card, updates = copy.copy(item['card']), copy.copy(item['updates'])
+        card, updates = item
         # Labels and attachments are processed after the card is created
         labels = updates.pop('labels', [])
         attachments = updates.pop('attachments', [])
-        # Throw out any keys in updates that match the corresponding key in the card
-        updates = { k: v for k, v in updates.items() if v != card[k] }
+        # Calculate the required patch for the card itself
+        patch = { k: v for k, v in updates.items() if v != card[k] }
         return functools.reduce(
             lambda card, label: session.add_label(card, label),
             labels,
             functools.reduce(
                 lambda card, url: session.add_url_attachment(card, url),
                 attachments,
-                session.update_card(card['id'], updates) if updates else card
+                session.update_card(card['id'], patch) if patch else card
             )
         )
     return func

@@ -150,10 +150,11 @@ class Session(Connector):
         )
         return next((a for a in attrs if a['name'] == name), None)
 
-    def create_card(self, parent_id, card):
+    def create_card(self, project, card):
         """
-        Creates a new card under the given parent.
+        Creates a new card in the given project.
         """
+        parent_id = project['top_level_card_id']
         return self.as_json(
             self._session.post(
                 self.url(f"/cards/{parent_id}/children"),
@@ -161,24 +162,55 @@ class Session(Connector):
             )
         )
 
-    def add_card_to_group(self, card_id, group_id):
+    def update_card(self, card_id, patch):
         """
-        Adds the card to the given group.
+        Update the given card with the given patch.
         """
         return self.as_json(
-            self._session.post(
-                self.url(f"/cards/{card_id}/add-to-group"),
-                params = dict(group_id = group_id)
+            self._session.put(
+                self.url(f"/cards/{card_id}"),
+                params = patch
             )
         )
 
-    def append_attribute_value(self, card_id, attr_id, value):
+    def add_card_to_group(self, card, group_type, group_name):
+        """
+        Adds the card to the given group.
+        """
+        project = self.find_project_by_id(card['project_id'])
+        group_type = self.find_or_create_group_type(
+            project['id'],
+            group_type
+        )
+        group = self.find_or_create_group(
+            project['top_level_card_id'],
+            group_type['id'],
+            group_name
+        )
+        return self.as_json(
+            self._session.post(
+                self.url("/cards/{}/add-to-group".format(card['id'])),
+                params = dict(group_id = group['id'])
+            )
+        )
+
+    def append_attribute_value(self, card, name, value):
         """
         Appends the given value to the specified attribute for the specified card.
         """
+        attr = None
+        if card['model_id'] is not None:
+            attr = self.find_card_model_attribute(card['model_id'], name)
+        if attr is None:
+            attr = self.find_project_attribute(card['project_id'], name)
+        if attr is None:
+            raise LookupError(f"Could not find attribute '{name}'")
         return self.as_json(
             self._session.post(
-                self.url(f"/cards/{card_id}/attributes/{attr_id}/append"),
+                self.url("/cards/{}/attributes/{}/append".format(
+                    card['id'],
+                    attr['id']
+                )),
                 params = dict(value = value)
             )
         )
@@ -215,42 +247,55 @@ def create_card(session, project_name):
         # Pop off the groups and attributes as we will deal with them later
         groups = item.pop('groups', [])
         attributes = item.pop('attributes', [])
-        # Then create a new card in the project's top-level card
-        card = session.create_card(project['top_level_card_id'], item)
+        # Then create a new card in the project
+        card = session.create_card(project, item)
         # Process the groups
         for group in groups:
-            group_name, group_type_name = group['name'], group['type']
-            group_type = session.find_or_create_group_type(
-                project['id'],
-                group_type_name
-            )
-            group = session.find_or_create_group(
-                project['top_level_card_id'],
-                group_type['id'],
-                group_name
-            )
             card.setdefault('groups', []).append(
-                session.add_card_to_group(card['id'], group['id'])
+                session.add_card_to_group(card, group['type'], group['name'])
             )
         # Process the attributes
-        for a in attributes:
-            attr_name, attr_value = a['name'], a['value']
-            attr = None
-            if card['model_id'] is not None:
-                attr = session.find_card_model_attribute(
-                    card['model_id'],
-                    attr_name
-                )
-            if attr is None:
-                attr = session.find_project_attribute(
-                    card['project_id'],
-                    attr_name
-                )
-            if attr is None:
-                raise LookupError(f"Could not find attribute '{attr_name}' "
-                                   "in project '{project_name}'")
+        for attr in attributes:
             card.setdefault('attributes', []).append(
-                session.append_attribute_value(card['id'], attr['id'], attr_value)
+                session.append_attribute_value(
+                    card,
+                    attr['name'],
+                    attr['value']
+                )
+            )
+        return card
+    return func
+
+
+@minion_function
+def update_card(session):
+    """
+    Returns a function that accepts a ``(card, updates)`` tuple as the incoming
+    item and updates the card accordingly.
+    """
+    def func(item):
+        card, updates = item
+        # Pop off the groups and attributes as we will deal with them later
+        groups = updates.pop('groups', [])
+        attributes = updates.pop('attributes', [])
+        # Extract the required patch
+        patch = { k: v for k, v in updates.items() }#if card[k] != v }
+        # Update the card if required
+        if patch:
+            card = session.update_card(card['id'], patch)
+        # Process the groups
+        for group in groups:
+            card.setdefault('groups', []).append(
+                session.add_card_to_group(card, group['type'], group['name'])
+            )
+        # Process the attributes
+        for attr in attributes:
+            card.setdefault('attributes', []).append(
+                session.append_attribute_value(
+                    card,
+                    attr['name'],
+                    attr['value']
+                )
             )
         return card
     return func
