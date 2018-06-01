@@ -138,6 +138,9 @@ class Session(Connector):
 
     @functools.lru_cache()
     def find_project_attribute(self, project_id, name):
+        """
+        Finds an attribute in a project by name.
+        """
         attrs = self.as_json(
             self._session.get(self.url(f"/projects/{project_id}/attributes"))
         )
@@ -145,10 +148,28 @@ class Session(Connector):
 
     @functools.lru_cache()
     def find_card_model_attribute(self, model_id, name):
+        """
+        Finds an attribute in a model by name.
+        """
         attrs = self.as_json(
             self._session.get(self.url(f"/models/{model_id}/attributes"))
         )
         return next((a for a in attrs if a['name'] == name), None)
+
+    @functools.lru_cache()
+    def find_card_model_by_name(self, project_id, name):
+        """
+        Finds a card model in a project by name.
+        """
+        models = self.as_json(
+            self._session.get(
+                self.url(f"/projects/{project_id}/models")
+            )
+        )
+        try:
+            return next(model for model in models if model['name'] == name)
+        except StopIteration:
+            raise LookupError(f"Could not find card model '{name}'")
 
     def create_card(self, project, card):
         """
@@ -247,6 +268,12 @@ def create_card(session, project_name):
         # Pop off the groups and attributes as we will deal with them later
         groups = item.pop('groups', [])
         attributes = item.pop('attributes', [])
+        # Pop the model name and convert it to a model id
+        if 'model_name' in item:
+            item['model_id'] = session.find_card_model_by_name(
+                project['id'],
+                item.pop('model_name')
+            )['id']
         # Then create a new card in the project
         card = session.create_card(project, item)
         # Process the groups
@@ -278,8 +305,14 @@ def update_card(session):
         # Pop off the groups and attributes as we will deal with them later
         groups = updates.pop('groups', [])
         attributes = updates.pop('attributes', [])
+        # Pop the model name and convert it to a model id
+        if 'model_name' in updates:
+            updates['model_id'] = session.find_card_model_by_name(
+                card['project_id'],
+                updates.pop('model_name')
+            )['id']
         # Extract the required patch
-        patch = { k: v for k, v in updates.items() }#if card[k] != v }
+        patch = { k: v for k, v in updates.items() if card[k] != v }
         # Update the card if required
         if patch:
             card = session.update_card(card['id'], patch)

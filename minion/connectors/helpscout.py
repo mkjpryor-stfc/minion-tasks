@@ -52,7 +52,7 @@ class Session(Connector):
                 self._session.get(url, params = { 'page': page_num })
             )
             yield from page['items']
-            if page_num == page['pages']:
+            if page_num >= page['pages']:
                 break
             page_num += 1
 
