@@ -13,8 +13,8 @@ RUN groupadd -g $MINION_GID $MINION_GROUP && \
     useradd -M -g $MINION_GID -s /sbin/nologin -u $MINION_UID $MINION_USER
 
 # Create the entrypoint script
-RUN echo "#!/usr/bin/env bash" > /usr/local/bin/docker-entrypoint.sh && \
-    echo 'exec minion "$@"' >> /usr/local/bin/docker-entrypoint.sh && \
+RUN echo '#!/usr/bin/env bash' > /usr/local/bin/docker-entrypoint.sh && \
+    echo 'exec "$@"' >> /usr/local/bin/docker-entrypoint.sh && \
     chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Install git for version detection
@@ -27,5 +27,5 @@ COPY . /application
 RUN pip install -e /application
 
 USER $MINION_USER
-ENTRYPOINT ["minion"]
-CMD ["--help"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["minion"]
