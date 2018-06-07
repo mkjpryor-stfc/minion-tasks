@@ -1,5 +1,5 @@
 """
-Command-line interface for running Minion jobs.
+Base classes for loaders.
 """
 
 import pathlib

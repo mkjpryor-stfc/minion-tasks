@@ -1,5 +1,5 @@
 """
-Command-line interface for running Minion jobs.
+Command-line interface for managing Minion connectors.
 """
 
 import pathlib
