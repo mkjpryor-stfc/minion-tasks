@@ -2,68 +2,16 @@
 Command-line interface for running Minion jobs.
 """
 
-import os
 import sys
-import pathlib
-import logging
 import functools
 
 import click
 import yaml
-from appdirs import user_config_dir, site_config_dir, user_data_dir
 from tabulate import tabulate
 import coolname
 
-from .core import Job, Parameter, Template, Connector
-
-
-class HierarchicalDirectoryLoader:
-    """
-    Base class for loaders that implements the directory-searching functionality.
-    """
-    not_found_message = "Could not find object '{}'"
-
-    def __init__(self, *directories):
-        self.directories = tuple(map(pathlib.Path, directories))
-
-    def _from_path(self, path):
-        raise NotImplementedError
-
-    def list(self):
-        """
-        Returns an iterable of the available objects.
-        """
-        files = {}
-        for directory in reversed(self.directories):
-            for path in directory.glob("*.yaml"):
-                files[path.stem] = path
-        for name, path in sorted(files.items(), key = lambda x: x[0]):
-            yield self._from_path(path)
-
-    def find(self, name):
-        """
-        Returns the object with the specified name.
-        """
-        # Generate a loader with the parameters bound
-        for directory in self.directories:
-            path = directory / f"{name}.yaml"
-            if not path.exists():
-                continue
-            return self._from_path(path)
-        else:
-            raise LookupError(self.not_found_message.format(name))
-
-
-class TemplateLoader(HierarchicalDirectoryLoader):
-    """
-    Loader for templates that searches the given directories for YAML files.
-    """
-    not_found_message = "Could not find template '{}'"
-
-    def _from_path(self, path):
-        with path.open() as f:
-            spec = yaml.safe_load(f)
-        return Template(path.stem, spec.get('description', '-'), spec['spec'])
+from ..core import Job, Parameter
+from .loader import HierarchicalDirectoryLoader
 
 
 class JobLoader(HierarchicalDirectoryLoader):
@@ -114,168 +62,11 @@ class JobLoader(HierarchicalDirectoryLoader):
                 path.unlink()
 
 
-class ConnectorLoader:
-    """
-    Loader for connectors that looks for ``connectors.yaml`` in each of the
-    given directories and merges the results.
-
-    Each ``connectors.yaml`` can provide many connectors. If a connector with
-    the same name is given in multiple files, the one from the highest
-    precedence directory is used.
-    """
-    def __init__(self, *directories):
-        self.directories = tuple(map(pathlib.Path, directories))
-
-    def find_all(self):
-        """
-        Returns a dictionary of the available connectors indexed by name.
-        """
-        connectors = {}
-        # Start with the lowest-precedence directory and override as we go
-        for directory in reversed(self.directories):
-            path = directory / "connectors.yaml"
-            if not path.exists():
-                continue
-            with path.open() as f:
-                configs = yaml.safe_load(f)
-            for name, config in configs.items():
-                connectors[name] = Connector.from_config(name, config)
-        return connectors
-
-
 @click.group()
-@click.option(
-    '--debug/--no-debug',
-    default = False,
-    help = "Enable debug logging."
-)
-@click.option(
-    '--config-dir',
-    envvar = 'MINION_CONFIG_DIRS',
-    multiple = True,
-    type = click.Path(exists = True, file_okay = False, resolve_path = True),
-    help = 'Additional configuration directory (multiple permitted).'
-)
-@click.option(
-    '--data-dir',
-    envvar = 'MINION_DATA_DIRS',
-    multiple = True,
-    type = click.Path(
-        exists = True,
-        writable = True,
-        file_okay = False,
-        resolve_path = True
-    ),
-    help = 'Additional data directory (multiple permitted).'
-)
-@click.pass_context
-def main(ctx, debug, config_dir, data_dir):
-    """
-    Minion workflow manager.
-    """
-    logging.basicConfig(
-        format = "[%(levelname)s] [%(name)s] %(message)s",
-        level = logging.DEBUG if debug else logging.INFO
-    )
-    ctx.obj = {}
-    ctx.obj['config_dirs'] = config_dirs = [
-        *config_dir,
-        user_config_dir("minion"),
-        site_config_dir("minion")
-    ]
-    ctx.obj['data_dirs'] = data_dirs = [
-        *data_dir,
-        user_data_dir("minion")
-    ]
-    # Construct all the required loaders
-    ctx.obj['connectors'] = ConnectorLoader(*config_dirs)
-    ctx.obj['templates'] = templates = TemplateLoader(
-        *[os.path.join(d, "templates") for d in config_dirs]
-    )
-    ctx.obj['jobs'] = JobLoader(
-        templates,
-        *[os.path.join(d, "jobs") for d in data_dirs]
-    )
-
-
-@main.command(name = 'config-dirs')
-@click.pass_context
-def config_dirs(ctx):
-    """
-    Show the configuration directories in use.
-    """
-    click.echo(':'.join(ctx.obj['config_dirs']))
-
-
-@main.command(name = 'data-dirs')
-@click.pass_context
-def data_dirs(ctx):
-    """
-    Show the data directories in use.
-    """
-    click.echo(':'.join(ctx.obj['data_dirs']))
-
-
-@main.group()
-def connector():
-    """
-    Commands for managing connectors.
-    """
-
-
-@main.group()
-def template():
-    """
-    Commands for managing templates.
-    """
-
-
-@main.group()
 def job():
     """
     Commands for managing jobs.
     """
-
-
-@connector.command(name = "list")
-@click.pass_context
-def list_connectors(ctx):
-    """
-    List the available connectors.
-    """
-    connectors = ctx.obj['connectors'].find_all()
-    if connectors:
-        click.echo(tabulate(
-            [
-                (
-                    c.name,
-                    '{}.{}'.format(type(c).__module__, type(c).__qualname__)
-                )
-                # Sort the connectors by name
-                for c in sorted(connectors.values(), key = lambda c: c.name)
-            ],
-            headers = ('Name', 'Connector'),
-            tablefmt = 'psql'
-        ))
-    else:
-        click.echo('No connectors available.')
-
-
-@template.command(name = "list")
-@click.pass_context
-def list_templates(ctx):
-    """
-    List the available templates.
-    """
-    templates = list(ctx.obj['templates'].list())
-    if templates:
-        click.echo(tabulate(
-            [(t.name, t.description) for t in templates],
-            headers = ('Name', 'Description'),
-            tablefmt = 'psql'
-        ))
-    else:
-        click.echo("No templates available.")
 
 
 @job.command(name = "list")

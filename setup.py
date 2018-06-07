@@ -38,6 +38,6 @@ if __name__ == "__main__":
             'requests',
         ],
         entry_points = {
-            'console_scripts': ['minion = minion.cli:main']
+            'console_scripts': ['minion = minion.cli.main:main']
         },
     )
