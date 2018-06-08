@@ -2,14 +2,18 @@
 Command-line interface for Minion.
 """
 
+import sys
 import re
 import logging
+import functools
+import textwrap
 
 import click
 from tabulate import tabulate
 import coolname
 import yaml
 
+from ..core import Parameter
 from . import context
 
 
@@ -41,11 +45,11 @@ def main(ctx, debug, config_dir):
 @main.group(name = "connector")
 def connector_group():
     """
-    Commands for managing connectors.
+    Manage connectors.
     """
 
 
-@connector_group.command(name = "list")
+@connector_group.command(name = "ls")
 @click.pass_obj
 def connector_list(ctx):
     """
@@ -71,11 +75,11 @@ def connector_list(ctx):
 @main.group(name = "repo")
 def repo_group():
     """
-    Commands for managing template repositories.
+    Manage template repositories.
     """
 
 
-@repo_group.command(name = "list")
+@repo_group.command(name = "ls")
 @click.pass_obj
 def repo_list(ctx):
     """
@@ -142,7 +146,7 @@ def repo_add(ctx, copy, repo_name, repo_source):
     ctx.repositories.add(repo_name, repo_source, copy)
 
 
-@repo_group.command(name = "delete")
+@repo_group.command(name = "rm")
 @click.option("-f", "--force", is_flag = True, default = False,
               help = "Suppress confirmation.")
 @click.argument('repo_name', type = click.STRING)
@@ -159,11 +163,11 @@ def repo_delete(ctx, force, repo_name):
 @main.group(name = "template")
 def template_group():
     """
-    Commands for managing templates.
+    Manage templates.
     """
 
 
-@template_group.command(name = "list")
+@template_group.command(name = "ls")
 @click.pass_obj
 def template_list(ctx):
     """
@@ -184,11 +188,11 @@ def template_list(ctx):
 @main.group(name = "job")
 def job_group():
     """
-    Commands for managing jobs.
+    Manage jobs.
     """
 
 
-@job_group.command(name = "list")
+@job_group.command(name = "ls")
 @click.option(
     '-q',
     '--quiet',
@@ -250,17 +254,46 @@ def _merge(destination, values):
     help = "Parameter values as a YAML string."
 )
 @click.option(
-    "--description",
-    default = "",
-    help = "A brief description of the job."
+    "--input/--no-input",
+    "interactive",
+    default = True,
+    help = "Turn interactive configuration on/off."
 )
-@click.argument("template_name")
+@click.argument("template_name", required = False)
 @click.pass_obj
-def job_create(ctx, name, values_file, values_str, description, template_name):
+def job_create(ctx, name, values_file, values_str, interactive, template_name):
     """
     Create a job.
     """
-    template = ctx.templates.find(template_name)
+    # Only allow interactive creation if this is a TTY
+    interactive = interactive and sys.stdin.isatty()
+    if interactive:
+        click.echo("*****************************")
+        click.echo("** Interative mode enabled **")
+        click.echo("*****************************")
+        click.echo("")
+    if template_name is None:
+        if interactive:
+            # Allow the user to pick a template from the list of available ones
+            templates = list(ctx.templates.all())
+            if not templates:
+                click.secho("No templates available", fg = "red", bold = True)
+                raise SystemExit(1)
+            click.echo("Available templates:")
+            for i, template in enumerate(templates, start = 1):
+                click.echo("[{}] {}".format(i, template.name))
+            template_index = click.prompt(
+                "Select a template",
+                type = click.IntRange(1, len(templates))
+            )
+            click.echo("")
+            template = templates[template_index - 1]
+        else:
+            raise click.UsageError(
+                "TEMPLATE_NAME is required when in non-interactive mode."
+            )
+    else:
+        template = ctx.templates.find(template_name)
     # Merge the values files in the order they were given
     # Values from later files take precedence
     values = {}
@@ -269,9 +302,52 @@ def job_create(ctx, name, values_file, values_str, description, template_name):
     # Merge any overrides from the command line
     if values_str:
         _merge(values, yaml.safe_load(values_str))
+    if interactive:
+        # If running interactively, collect a description
+        description = click.prompt('Brief description of job')
+        click.echo("")
+        # Collect parameter values
+        for parameter in sorted(template.parameters, key = lambda p: p.name):
+            click.echo("Parameter '{}'".format(parameter.name))
+            if parameter.hint:
+                click.echo(
+                    "  Hint: " +
+                    textwrap.indent(parameter.hint, "    ").strip()
+                )
+            if parameter.example:
+                click.echo(
+                    "  Example: " +
+                    textwrap.indent(parameter.example, "    ").strip()
+                )
+            if parameter.default is not Parameter.NO_DEFAULT:
+                click.echo(
+                    "  Default: " +
+                    textwrap.indent(str(parameter.default), "    ").strip()
+                )
+            _merge(
+                values,
+                # Create a dictionary with nesting based on "."s in param name
+                functools.reduce(
+                    lambda v, p: { p: v },
+                    reversed(parameter.name.split(".")),
+                    click.prompt(
+                        "Enter value",
+                        show_default = False,
+                        default = parameter.default
+                            if parameter.default is not Parameter.NO_DEFAULT
+                            else None
+                    )
+                )
+            )
+            click.echo("")
+    else:
+        description = None
+        # Just try to resolve each parameter to see if an error is raised
+        for parameter in template.parameters:
+            parameter.resolve(values)
     # Save the job
     ctx.jobs.save(name, description, template, values)
-    click.echo(f"Created job '{name}'")
+    click.secho(f"Created job '{name}'", fg = 'green')
 
 
 @job_group.command(name = "run")
@@ -284,7 +360,7 @@ def job_run(ctx, name):
     ctx.jobs.find(name).run(ctx.connectors)
 
 
-@job_group.command(name = "delete")
+@job_group.command(name = "rm")
 @click.option(
     "-f",
     "--force",

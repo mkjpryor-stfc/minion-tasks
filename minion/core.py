@@ -79,16 +79,27 @@ class ParameterMissing(LookupError):
     """
     Raised when a required parameter is missing during resolution.
     """
-    def __init__(self, name):
-        self.parameter_name = name
-        super().__init__(f"No value for parameter '{name}'")
+    def __init__(self, parameter):
+        self.parameter = parameter
+        super().__init__("No value for parameter '{}'".format(parameter.name))
 
 
-class Parameter(collections.namedtuple('Parameter', ['name', 'default'])):
+class Parameter(collections.namedtuple('Parameter', ['name',
+                                                     'hint',
+                                                     'example',
+                                                     'default'])):
     """
     Class representing a parameter to a template.
     """
     NO_DEFAULT = object()
+
+    def __eq__(self, other):
+        if not isinstance(other, Parameter):
+            return None
+        return self.name == other.name
+
+    def __hash__(self):
+        return hash(self.name)
 
     def resolve(self, values):
         """
@@ -101,20 +112,11 @@ class Parameter(collections.namedtuple('Parameter', ['name', 'default'])):
             except KeyError:
                 if self.default is not self.NO_DEFAULT:
                     return self.default
-                raise ParameterMissing(self.name)
+                raise ParameterMissing(self)
         return values
 
-    @classmethod
-    def from_ref(cls, ref):
-        """
-        Returns a parameter based on the given reference dict.
-        """
-        return cls(ref['name'], ref.get('default', cls.NO_DEFAULT))
 
-
-class Template(collections.namedtuple('Template', ['name',
-                                                   'description',
-                                                   'spec'])):
+class Template:
     """
     A Minion template is a parameterisable specification of a Minion function
     using a dict-based configuration format.
@@ -122,33 +124,33 @@ class Template(collections.namedtuple('Template', ['name',
     Attributes:
         name: The name of the template.
         description: A brief description of the template.
+        parameters: A tuple of :class:`.Parameter`s for the template.
         spec: The dictionary specification of the template.
     """
+    def __init__(self, name, description, parameters, spec):
+        self.name = name
+        self.description = description
+        # Merge the set of given parameters with discovered ones, which will
+        # have no description or example or default
+        self.parameters = set(parameters).union(self._find_parameters(spec))
+        self.spec = spec
+
     def _find_parameters(self, spec):
         if isinstance(spec, collections.abc.Mapping):
             if 'parameterRef' in spec:
-                yield Parameter.from_ref(spec['parameterRef'])
+                yield Parameter(
+                    spec['parameterRef'],
+                    # No hint or example
+                    None,
+                    None,
+                    Parameter.NO_DEFAULT
+                )
             else:
                 for v in spec.values():
                     yield from self._find_parameters(v)
         elif isiterable(spec):
             for v in spec:
                 yield from self._find_parameters(v)
-
-    @property
-    def parameters(self):
-        """
-        Set of parameters required by the template.
-        """
-        return set(self._find_parameters(self.spec))
-
-    def check_values(self, values):
-        """
-        Checks if the given values satisfy the required parameters. If not,
-        :class:`.ParameterMissing` is raised.
-        """
-        for param in self.parameters:
-            param.resolve(values)
 
     def _resolve_refs(self, connectors, values, spec):
         if isinstance(spec, collections.abc.Mapping):
@@ -172,14 +174,21 @@ class Template(collections.namedtuple('Template', ['name',
                 try:
                     return connectors[connector_name]
                 except KeyError:
-                    raise LookupError(f"Could not find connector '{connector_name}'")
+                    raise LookupError(
+                        f"Could not find connector '{connector_name}'"
+                    )
             elif 'parameterRef' in spec:
-                parameter_ref = self._resolve_refs(
+                parameter_name = self._resolve_refs(
                     connectors,
                     values,
                     spec['parameterRef']
                 )
-                return Parameter.from_ref(parameter_ref).resolve(values)
+                # Get the parameter from the list of parameters and resolve it
+                # It should be impossible for this to raise StopIteration
+                parameter = next(
+                    p for p in self.parameters if p.name == parameter_name
+                )
+                return parameter.resolve(values)
             else:
                 return {
                     k: self._resolve_refs(connectors, values, v)

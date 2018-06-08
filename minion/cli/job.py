@@ -45,8 +45,6 @@ class JobManager:
         """
         Saves the given job in the directory with the highest precedence.
         """
-        # Check the values first
-        template.check_values(values)
         # Before attempting to write, ensure the directory exists
         self.directory.mkdir(parents = True, exist_ok = True)
         dest = self.directory / "{}.yaml".format(name)

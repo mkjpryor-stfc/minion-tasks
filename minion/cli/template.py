@@ -6,7 +6,7 @@ import pathlib
 
 import yaml
 
-from ..core import Template
+from ..core import Parameter, Template
 
 
 class TemplateManager:
@@ -27,6 +27,15 @@ class TemplateManager:
         return Template(
             name,
             template_spec.get('description', '-'),
+            set(
+                Parameter(
+                    name,
+                    param.get('hint'),
+                    param.get('example'),
+                    param.get('default', Parameter.NO_DEFAULT)
+                )
+                for name, param in template_spec.get('parameters', {}).items()
+            ),
             template_spec['spec']
         )
 
