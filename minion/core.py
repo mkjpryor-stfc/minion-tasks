@@ -75,18 +75,19 @@ class Connector:
         return connector_class(name, **config)
 
 
+class ParameterMissing(LookupError):
+    """
+    Raised when a required parameter is missing during resolution.
+    """
+    def __init__(self, name):
+        self.parameter_name = name
+        super().__init__(f"No value for parameter '{name}'")
+
+
 class Parameter(collections.namedtuple('Parameter', ['name', 'default'])):
     """
     Class representing a parameter to a template.
     """
-    class Missing(LookupError):
-        """
-        Raised when a required parameter is missing during resolution.
-        """
-        def __init__(self, name):
-            self.parameter_name = name
-            super().__init__(f"No value for parameter '{name}'")
-
     NO_DEFAULT = object()
 
     def resolve(self, values):
@@ -100,7 +101,7 @@ class Parameter(collections.namedtuple('Parameter', ['name', 'default'])):
             except KeyError:
                 if self.default is not self.NO_DEFAULT:
                     return self.default
-                raise self.Missing(self.name)
+                raise ParameterMissing(self.name)
         return values
 
     @classmethod
@@ -143,8 +144,8 @@ class Template(collections.namedtuple('Template', ['name',
 
     def check_values(self, values):
         """
-        Checks if the given values satisfy the required parameters. If not, a
-        :class:`.Parameter.Missing` is raised.
+        Checks if the given values satisfy the required parameters. If not,
+        :class:`.ParameterMissing` is raised.
         """
         for param in self.parameters:
             param.resolve(values)

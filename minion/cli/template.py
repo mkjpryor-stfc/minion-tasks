@@ -1,46 +1,55 @@
 """
-Command-line interface for managing Minion templates.
+Module containing classes and helpers for working with Minion templates.
 """
 
-import click
+import pathlib
+
 import yaml
-from tabulate import tabulate
 
 from ..core import Template
-from .loader import HierarchicalDirectoryLoader
 
 
-class TemplateLoader(HierarchicalDirectoryLoader):
+class TemplateManager:
     """
-    Loader for templates that searches the given directories for YAML files.
+    Minion template manager.
     """
-    not_found_message = "Could not find template '{}'"
+    def __init__(self, directory):
+        self.directory = directory.resolve()
 
-    def _from_path(self, path):
+    def from_path(self, path):
+        try:
+            name = str(path.relative_to(self.directory).with_suffix(''))
+        except ValueError:
+            # If the relative path could not be resolved, use the full path
+            name = str(path)
         with path.open() as f:
-            spec = yaml.safe_load(f)
-        return Template(path.stem, spec.get('description', '-'), spec['spec'])
+            template_spec = yaml.safe_load(f)
+        return Template(
+            name,
+            template_spec.get('description', '-'),
+            template_spec['spec']
+        )
 
+    def all(self):
+        """
+        Returns an iterable of available templates.
+        """
+        if not self.directory.exists():
+            return
+        template_paths = self.directory.glob("*/*.yaml")
+        for path in sorted(template_paths, key = lambda p: str(p)):
+            yield self.from_path(path)
 
-@click.group()
-def template():
-    """
-    Commands for managing templates.
-    """
-
-
-@template.command(name = "list")
-@click.pass_context
-def list_templates(ctx):
-    """
-    List the available templates.
-    """
-    templates = list(ctx.obj['templates'].list())
-    if templates:
-        click.echo(tabulate(
-            [(t.name, t.description) for t in templates],
-            headers = ('Name', 'Description'),
-            tablefmt = 'psql'
-        ))
-    else:
-        click.echo("No templates available.")
+    def find(self, name):
+        """
+        Finds and returns a template by name.
+        """
+        # First, see if name is an actual file - if it is, use it
+        path = pathlib.Path(name)
+        if path.is_file():
+            return self.from_path(path)
+        # If it is not, try and find it in our directory
+        path = self.directory / path.with_suffix('.yaml')
+        if path.exists():
+            return self.from_path(path)
+        raise LookupError("Template {} does not exist".format(repr(name)))

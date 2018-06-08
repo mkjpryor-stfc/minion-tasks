@@ -29,13 +29,13 @@ if __name__ == "__main__":
         include_package_data = True,
         zip_safe = False,
         install_requires = [
-            'appdirs',
             'tabulate',
             'click',
             'coolname',
             'jinja2',
             'pyyaml',
             'requests',
+            'dulwich',
         ],
         entry_points = {
             'console_scripts': ['minion = minion.cli.main:main']
