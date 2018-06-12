@@ -55,7 +55,7 @@ def connector_list(ctx):
     """
     List the available connectors.
     """
-    connectors = list(ctx.connectors)
+    connectors = ctx.connectors
     if connectors:
         click.echo(tabulate(
             [

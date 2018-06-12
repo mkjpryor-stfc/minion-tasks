@@ -18,8 +18,8 @@ class Context:
     """
     def __init__(self, config_dir):
         self.config_dir = pathlib.Path(config_dir).resolve()
-        self.repositories = RepositoryManager(self.config_dir / "repos")
-        self.templates = TemplateManager(self.config_dir / "repos")
+        self.repositories = RepositoryManager(self.config_dir / "templates")
+        self.templates = TemplateManager(self.config_dir / "templates")
         self.jobs = JobManager(self.templates, self.config_dir / "jobs")
 
     @property
