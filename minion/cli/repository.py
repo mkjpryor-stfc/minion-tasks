@@ -72,7 +72,8 @@ class RepositoryManager:
         """
         # Check if a repo with the name already exists
         repo_path = self.directory.joinpath(repo_name)
-        if repo_path.exists():
+        # exists will fail if repo_path is a broken symlink, so test for it
+        if repo_path.is_symlink() or repo_path.exists():
             raise RepositoryAlreadyExistsError(repo_name)
         # If repo_source is a local directory, create a symlink or copy
         # depending on the value of the flag given
