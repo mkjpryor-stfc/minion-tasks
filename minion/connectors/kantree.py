@@ -252,13 +252,14 @@ def cards_assigned_to_user(session):
 
 
 @minion_function
-def cards_for_project(session, project_name):
+def cards_for_project(session, project_name, with_archived = True):
     """
     Returns a function that ignores its arguments and returns a list of cards
     for the given project.
     """
     return lambda *args: session.cards_for_project(
-        session.find_project_by_name(project_name)['id']
+        session.find_project_by_name(project_name)['id'],
+        with_archived
     )
 
 
