@@ -78,11 +78,16 @@ class Session(Connector):
             )
         )
 
-    def cards_for_project(self, id):
+    def cards_for_project(self, id, with_archived = True):
         """
         Returns a list of cards for the given project id.
         """
-        return self.as_json(self._session.get(self.url(f"/projects/{id}/cards")))
+        return self.as_json(
+            self._session.get(
+                self.url(f"/projects/{id}/cards"),
+                params = dict(with_archived = with_archived)
+            )
+        )
 
     @functools.lru_cache()
     def find_or_create_group_type(self, project_id, name):
