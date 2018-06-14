@@ -89,10 +89,10 @@ def repo_list(ctx):
     if repositories:
         click.echo(tabulate(
             [
-                (repo.name, repo.type, repo.path)
+                (repo.name, repo.type, repo.location)
                 for repo in sorted(repositories, key = lambda r: r.name)
             ],
-            headers = ('Name', 'Type', 'Path'),
+            headers = ('Name', 'Type', 'Location'),
             tablefmt = 'psql'
         ))
     else:
@@ -144,6 +144,19 @@ def repo_add(ctx, copy, repo_name, repo_source):
     Currently, REPO_SOURCE can be a local directory or a git repository.
     """
     ctx.repositories.add(repo_name, repo_source, copy)
+
+
+@repo_group.command(name = "update")
+@click.argument('repo_name', type = click.STRING)
+@click.pass_obj
+def repo_update(ctx, repo_name):
+    """
+    Update a repository.
+
+    For git repositories, this will pull changes from the origin. For local
+    repositories, it is a no-op.
+    """
+    ctx.repositories.update(repo_name)
 
 
 @repo_group.command(name = "rm")

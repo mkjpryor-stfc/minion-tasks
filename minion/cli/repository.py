@@ -2,8 +2,12 @@
 Module containing classes and helpers for working with Minion repositories.
 """
 
+import os
 import pathlib
 import shutil
+from collections import namedtuple
+
+from dulwich import porcelain
 
 
 class RepositoryError(Exception):
@@ -36,14 +40,10 @@ class RepositoryDoesNotExistError(RepositoryError, LookupError):
         super().__init__(f"Repository '{name}' does not exist")
 
 
-class Repository:
+class Repository(namedtuple('Repository', ['name', 'type', 'location'])):
     """
     DTO for a Minion repository.
     """
-    def __init__(self, name, path):
-        self.name = name
-        self.path = path
-        self.type = "local"
 
 
 class RepositoryManager:
@@ -52,6 +52,26 @@ class RepositoryManager:
     """
     def __init__(self, directory):
         self.directory = directory.resolve()
+
+    def _from_path(self, path):
+        # We already know that the path is a (symlink to a) directory
+        # If it is a symlink, it is a local repository, even if the other end
+        # is a git repo
+        if path.is_symlink():
+            return Repository(path.stem, 'local', path.resolve())
+        # Now we know we have a path to a directory that is not a symlink
+        # To have type 'git', it must be a git repo with a remote called 'origin'
+        # The remote URL is what we return as path
+        try:
+            with porcelain.open_repo_closing(path) as r:
+                # Let the KeyError get caught be the outer try
+                origin = r.get_config().get((b"remote", b"origin"), b"url")
+            return Repository(path.stem, 'git', origin.decode())
+        except Exception:
+            # Ignore errors
+            pass
+        # If it is not a git repo with an origin, treat it as a regular directory
+        return Repository(path.stem, 'local', path.resolve())
 
     def all(self):
         """
@@ -64,7 +84,7 @@ class RepositoryManager:
         for child in sorted(self.directory.iterdir(), key = lambda c: c.stem):
             # This will fail if a symlink is broken
             if child.is_dir():
-                yield Repository(child.stem, child.resolve())
+                yield self._from_path(child)
 
     def add(self, repo_name, repo_source, copy = False):
         """
@@ -88,7 +108,15 @@ class RepositoryManager:
                 # Create a symlink at repo_path to the directory
                 repo_path.symlink_to(source_path.resolve(), True)
             return
-        raise InvalidRepositorySourceError(repo_source)
+        # Otherwise, try and treat repo_source as a git repository to clone
+        try:
+            with open(os.devnull, 'wb') as f:
+                porcelain.clone(repo_source, str(repo_path), errstream = f)
+        except Exception:
+            # If an exception occurs, clean up anything at repo_path
+            if repo_path.exists():
+                shutil.rmtree(repo_path)
+            raise
 
     def find(self, repo_name):
         """
@@ -97,7 +125,24 @@ class RepositoryManager:
         repo_path = self.directory.joinpath(repo_name)
         if not repo_path.is_dir():
             raise RepositoryDoesNotExistError(repo_name)
-        return Repository(repo_name, repo_path.resolve())
+        return self._from_path(repo_path)
+
+    def update(self, repo_name):
+        """
+        Updates the specified repository. If the repository is a git repository,
+        this will pull the latest changes from origin. If the repository is a
+        local directory, it is a no-op.
+        """
+        repo = self.find(repo_name)
+        if repo.type is 'git':
+            repo_path = self.directory.joinpath(repo.name)
+            with open(os.devnull, 'wb') as f:
+                porcelain.pull(
+                    str(repo_path),
+                    remote_location = repo.location,
+                    outstream = f,
+                    errstream = f
+                )
 
     def delete(self, repo_name):
         """
