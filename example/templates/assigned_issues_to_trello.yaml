@@ -12,7 +12,7 @@ spec:
                 name: "github.connector_name"
                 default: "github"
 
-      # The output of this step is a tuple containing two iterables - (issues, cards)
+      # The output of this step is a tuple containing two iterables - (issues, cards)
       - functionRef:
           path: minion.functions.fork_join
           functions:
@@ -27,18 +27,18 @@ spec:
                 board_name:
                   parameterRef: { name: "trello.board_name" }
 
-      # The output of this step is an iterable of (issue, card) tuples that pass
+      # The output of this step is an iterable of (issue, card) tuples that pass
       # the matcher
-      # If there is no matching card, the card is None
+      # If there is no matching card, the card is None
       - functionRef:
           path: minion.functions.zip_matching
-          # The input to the matcher is an (issue, card) tuple
+          # The input to the matcher is an (issue, card) tuple
           matcher:
             functionRef:
               path: minion.functions.expression
               expression: "input.0.html_url in input.1.attachments|map(attribute='url')"
 
-      # Throw away the tuples which already have a card
+      # Throw away the tuples which already have a card
       - functionRef:
           path: minion.functions.select
           predicate:
@@ -64,7 +64,7 @@ spec:
                   - name: "{{ issue.repository.full_name }}"
                     color: green
 
-      # Create a card for each of the structures
+      # Create a card for each of the structures
       - functionRef:
           path: minion.functions.collect
           function:

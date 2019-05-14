@@ -131,7 +131,7 @@ class Template:
         self.name = name
         self.description = description
         # Merge the set of given parameters with discovered ones, which will
-        # have no description or example or default
+        # have no description or example or default
         self.parameters = set(parameters).union(self._find_parameters(spec))
         self.spec = spec
 
@@ -183,8 +183,8 @@ class Template:
                     values,
                     spec['parameterRef']
                 )
-                # Get the parameter from the list of parameters and resolve it
-                # It should be impossible for this to raise StopIteration
+                # Get the parameter from the list of parameters and resolve it
+                # It should be impossible for this to raise StopIteration
                 parameter = next(
                     p for p in self.parameters if p.name == parameter_name
                 )

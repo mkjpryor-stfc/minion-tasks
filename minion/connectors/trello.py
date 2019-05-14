@@ -20,7 +20,7 @@ class Session(Connector):
             self.api_token = api_token
 
         def __call__(self, req):
-            # Inject the additional URL parameters for authentication
+            # Inject the additional URL parameters for authentication
             req.prepare_url(
                 req.url,
                 dict(key = self.api_key, token = self.api_token)
@@ -135,7 +135,7 @@ class Session(Connector):
         """
         Attaches the given url to the card and returns the updated card.
         """
-        # If the attachment already exists, there is nothing to do
+        # If the attachment already exists, there is nothing to do
         if not any(a.get('url') == url for a in card.get('attachments', [])):
             card.setdefault('attachments', []).append(
                 self.as_json(
@@ -199,9 +199,9 @@ def create_card(board_name, list_name, session):
     """
     def func(item):
         # We don't want to modify the incoming item directly, but a shallow
-        # copy is fine
+        # copy is fine
         item = copy.copy(item)
-        # Attach the list id for the specified list
+        # Attach the list id for the specified list
         board = session.find_board_by_name(board_name)
         try:
             item.update(
@@ -214,7 +214,7 @@ def create_card(board_name, list_name, session):
             raise RuntimeError(
                 f"Could not find list '{list_name}' in board '{board_name}'"
             )
-        # Labels and attachments are processed after the card is created
+        # Labels and attachments are processed after the card is created
         labels = item.pop('labels', [])
         attachments = item.pop('attachments', [])
         return functools.reduce(
@@ -242,10 +242,10 @@ def update_card(session):
         # Get the card and updates from the incoming item
         # Use shallow copies so we don't modify the incoming item
         card, updates = item
-        # Labels and attachments are processed after the card is created
+        # Labels and attachments are processed after the card is created
         labels = updates.pop('labels', [])
         attachments = updates.pop('attachments', [])
-        # Calculate the required patch for the card itself
+        # Calculate the required patch for the card itself
         patch = { k: v for k, v in updates.items() if v != card[k] }
         return functools.reduce(
             lambda card, label: session.add_label(card, label),

@@ -270,7 +270,7 @@ def _merge(destination, values):
     "--input/--no-input",
     "interactive",
     default = True,
-    help = "Turn interactive configuration on/off."
+    help = "Turn interactive configuration on/off (default on)."
 )
 @click.argument("template_name", required = False)
 @click.pass_obj
@@ -287,7 +287,7 @@ def job_create(ctx, name, values_file, values_str, interactive, template_name):
         click.echo("")
     if template_name is None:
         if interactive:
-            # Allow the user to pick a template from the list of available ones
+            # Allow the user to pick a template from the list of available ones
             templates = list(ctx.templates.all())
             if not templates:
                 click.secho("No templates available", fg = "red", bold = True)
@@ -308,7 +308,7 @@ def job_create(ctx, name, values_file, values_str, interactive, template_name):
     else:
         template = ctx.templates.find(template_name)
     # Merge the values files in the order they were given
-    # Values from later files take precedence
+    # Values from later files take precedence
     values = {}
     for f in values_file:
         _merge(values, yaml.safe_load(f))
@@ -316,7 +316,7 @@ def job_create(ctx, name, values_file, values_str, interactive, template_name):
     if values_str:
         _merge(values, yaml.safe_load(values_str))
     if interactive:
-        # If running interactively, collect a description
+        # If running interactively, collect a description
         description = click.prompt('Brief description of job')
         click.echo("")
         # Collect parameter values
@@ -355,7 +355,7 @@ def job_create(ctx, name, values_file, values_str, interactive, template_name):
             click.echo("")
     else:
         description = None
-        # Just try to resolve each parameter to see if an error is raised
+        # Just try to resolve each parameter to see if an error is raised
         for parameter in template.parameters:
             parameter.resolve(values)
     # Save the job

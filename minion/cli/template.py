@@ -20,7 +20,7 @@ class TemplateManager:
         try:
             name = str(path.relative_to(self.directory).with_suffix(''))
         except ValueError:
-            # If the relative path could not be resolved, use the full path
+            # If the relative path could not be resolved, use the full path
             name = str(path)
         with path.open() as f:
             template_spec = yaml.safe_load(f)
@@ -53,11 +53,11 @@ class TemplateManager:
         """
         Finds and returns a template by name.
         """
-        # First, see if name is an actual file - if it is, use it
+        # First, see if name is an actual file - if it is, use it
         path = pathlib.Path(name)
         if path.is_file():
             return self.from_path(path)
-        # If it is not, try and find it in our directory
+        # If it is not, try and find it in our directory
         path = self.directory / path.with_suffix('.yaml')
         if path.exists():
             return self.from_path(path)

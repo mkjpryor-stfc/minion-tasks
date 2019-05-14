@@ -16,9 +16,9 @@ class Session(Connector):
         Requests authentication provider for Help Scout API requests.
         """
         def __init__(self, api_token):
-            # The API uses Basic auth with the API key as the username and a
-            # dummy password
-            # So we need to base64-encode
+            # The API uses Basic auth with the API key as the username and a
+            # dummy password
+            # So we need to base64-encode
             self.api_token = base64.b64encode(f"{api_token}:X".encode()).decode()
 
         def __call__(self, req):

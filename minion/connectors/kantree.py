@@ -16,7 +16,7 @@ class Session(Connector):
         Requests authentication provider for Kantree API requests.
         """
         def __init__(self, api_token):
-            # For some reason, the API token is given as base64-encoded
+            # For some reason, the API token is given as base64-encoded
             self.api_token = base64.b64encode(api_token.encode()).decode()
 
         def __call__(self, req):
@@ -61,7 +61,7 @@ class Session(Connector):
         """
         Finds a project by name.
         """
-        # Find the project from the list by name
+        # Find the project from the list by name
         try:
             return next(p for p in self.projects() if p['title'] == name)
         except StopIteration:
@@ -271,23 +271,23 @@ def create_card(session, project_name):
     """
     def func(item):
         project = session.find_project_by_name(project_name)
-        # Pop off the groups and attributes as we will deal with them later
+        # Pop off the groups and attributes as we will deal with them later
         groups = item.pop('groups', [])
         attributes = item.pop('attributes', [])
-        # Pop the model name and convert it to a model id
+        # Pop the model name and convert it to a model id
         if 'model_name' in item:
             item['model_id'] = session.find_card_model_by_name(
                 project['id'],
                 item.pop('model_name')
             )['id']
-        # Then create a new card in the project
+        # Then create a new card in the project
         card = session.create_card(project, item)
-        # Process the groups
+        # Process the groups
         for group in groups:
             card.setdefault('groups', []).append(
                 session.add_card_to_group(card, group['type'], group['name'])
             )
-        # Process the attributes
+        # Process the attributes
         for attr in attributes:
             card.setdefault('attributes', []).append(
                 session.append_attribute_value(
@@ -308,26 +308,26 @@ def update_card(session):
     """
     def func(item):
         card, updates = item
-        # Pop off the groups and attributes as we will deal with them later
+        # Pop off the groups and attributes as we will deal with them later
         groups = updates.pop('groups', [])
         attributes = updates.pop('attributes', [])
-        # Pop the model name and convert it to a model id
+        # Pop the model name and convert it to a model id
         if 'model_name' in updates:
             updates['model_id'] = session.find_card_model_by_name(
                 card['project_id'],
                 updates.pop('model_name')
             )['id']
-        # Extract the required patch
+        # Extract the required patch
         patch = { k: v for k, v in updates.items() if card[k] != v }
-        # Update the card if required
+        # Update the card if required
         if patch:
             card = session.update_card(card['id'], patch)
-        # Process the groups
+        # Process the groups
         for group in groups:
             card.setdefault('groups', []).append(
                 session.add_card_to_group(card, group['type'], group['name'])
             )
-        # Process the attributes
+        # Process the attributes
         for attr in attributes:
             card.setdefault('attributes', []).append(
                 session.append_attribute_value(

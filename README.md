@@ -54,7 +54,7 @@ A useful pattern for configuration is the following:
       assigned_issues_to_trello
     ```
 
-## Defining jobs
+## Defining jobs
 
 Jobs are defined using a YAML-based DSL. For examples, see the `examples`
 directory.
