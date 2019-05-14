@@ -3,7 +3,7 @@
 #####
 
 # Build wheels in a build stage with git and gcc available
-FROM python:3.6-slim AS minion-build
+FROM python:3.6-slim-jessie AS minion-build
 
 RUN apt-get update && \
     apt-get install -y git build-essential && \
@@ -16,7 +16,7 @@ RUN mkdir /pip-wheels && \
 
 
 # Build the actual container without gcc
-FROM python:3.6-slim
+FROM python:3.6-slim-jessie
 
 # Create a local user to run Minion under
 ENV MINION_USER minion
