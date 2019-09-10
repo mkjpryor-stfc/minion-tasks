@@ -105,7 +105,7 @@ def identity():
 
 
 @minion_function
-def fork_join(functions):
+def fork(functions):
     """
     Returns a function that executes each of the given functions for the
     incoming item and returns a tuple of the results in the same order.
