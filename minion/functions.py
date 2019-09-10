@@ -132,7 +132,7 @@ def template(template, globals = None):
     """
     globals = globals if globals is not None else {}
     template = jinja2.Template(template)
-    return lambda item: yaml.load(template.render(input = item, **globals))
+    return lambda item: yaml.safe_load(template.render(input = item, **globals))
 
 
 @minion_function
