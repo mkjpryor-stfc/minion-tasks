@@ -199,6 +199,26 @@ class Session(Connector):
             )
         )
 
+    def set_card_model(self, card_id, model_id):
+        if model_id:
+            params = dict(model_id = model_id)
+        else:
+            params = dict()
+        return self.as_json(
+            self._session.post(
+                self.url(f"/cards/{card_id}/model"),
+                params = params
+            )
+        )
+
+    def set_card_state(self, card_id, state = 'undecided'):
+        return self.as_json(
+            self._session.post(
+                self.url(f"/cards/{card_id}/state"),
+                params = dict(state = state)
+            )
+        )
+
     def add_card_to_group(self, card, group_type, group_name):
         """
         Adds the card to the given group.
@@ -220,26 +240,50 @@ class Session(Connector):
             )
         )
 
-    def append_attribute_value(self, card, name, value):
+    def remove_card_from_group(self, card, group_type, group_name):
+        """
+        Removes the card from the given group.
+        """
+        project = self.find_project_by_id(card['project_id'])
+        group_type = self.find_or_create_group_type(
+            project['id'],
+            group_type
+        )
+        group = self.find_or_create_group(
+            project['top_level_card_id'],
+            group_type['id'],
+            group_name
+        )
+        return self.as_json(
+            self._session.post(
+                self.url("/cards/{}/remove-from-group".format(card['id'])),
+                params = dict(group_id = group['id'])
+            )
+        )
+
+    def attach_link_to_card(self, card, url):
         """
         Appends the given value to the specified attribute for the specified card.
         """
-        attr = None
-        if card['model_id'] is not None:
-            attr = self.find_card_model_attribute(card['model_id'], name)
-        if attr is None:
-            attr = self.find_project_attribute(card['project_id'], name)
-        if attr is None:
-            raise LookupError(f"Could not find attribute '{name}'")
-        return self.as_json(
+        attr = self.find_project_attribute(card['project_id'], "Attachments")
+        # First, check if the link has already been attached
+        for card_attr in card['attributes']:
+            # This isn't the correct attribute
+            if card_attr['id'] != attr['id']:
+                continue
+            # If there is a URL that matches, we are done
+            if any(v['url'] == url for v in card_attr['value']):
+                return card
+        card.setdefault('attributes', []).append(self.as_json(
             self._session.post(
                 self.url("/cards/{}/attributes/{}/append".format(
                     card['id'],
                     attr['id']
                 )),
-                params = dict(value = value)
+                params = dict(value = url)
             )
-        )
+        ))
+        return card
 
 
 @minion_function
@@ -264,77 +308,44 @@ def cards_for_project(session, project_name, with_archived = True):
 
 
 @minion_function
-def create_card(session, project_name):
+def create_or_update_card(session, project_name):
     """
-    Returns a function that uses the incoming item to create a new card in the
-    given project.
-    """
-    def func(item):
-        project = session.find_project_by_name(project_name)
-        # Pop off the groups and attributes as we will deal with them later
-        groups = item.pop('groups', [])
-        attributes = item.pop('attributes', [])
-        # Pop the model name and convert it to a model id
-        if 'model_name' in item:
-            item['model_id'] = session.find_card_model_by_name(
-                project['id'],
-                item.pop('model_name')
-            )['id']
-        # Then create a new card in the project
-        card = session.create_card(project, item)
-        # Process the groups
-        for group in groups:
-            card.setdefault('groups', []).append(
-                session.add_card_to_group(card, group['type'], group['name'])
-            )
-        # Process the attributes
-        for attr in attributes:
-            card.setdefault('attributes', []).append(
-                session.append_attribute_value(
-                    card,
-                    attr['name'],
-                    attr['value']
-                )
-            )
-        return card
-    return func
-
-
-@minion_function
-def update_card(session):
-    """
-    Returns a function that accepts a ``(card, updates)`` tuple as the incoming
-    item and updates the card accordingly.
+    Returns a function that accepts a ``(card, updates)`` tuple, where ``card`` can
+    be ``None``, and either creates or updates the corresponding card in the given
+    project.
     """
     def func(item):
         card, updates = item
-        # Pop off the groups and attributes as we will deal with them later
-        groups = updates.pop('groups', [])
-        attributes = updates.pop('attributes', [])
-        # Pop the model name and convert it to a model id
-        if 'model_name' in updates:
-            updates['model_id'] = session.find_card_model_by_name(
-                card['project_id'],
-                updates.pop('model_name')
-            )['id']
-        # Extract the required patch
-        patch = { k: v for k, v in updates.items() if card[k] != v }
-        # Update the card if required
-        if patch:
-            card = session.update_card(card['id'], patch)
+        # We will deal with these later
+        model_name = updates.pop('model_name')
+        state = updates.pop('state') or 'undecided'
+        groups_add = updates.pop('groups_add', []) + updates.pop('groups', [])
+        groups_remove = updates.pop('groups_remove', [])
+        links = updates.pop('links', [])
+        # Create or update the card
+        if card:
+            project = session.find_project_by_id(card['project_id'])
+            card = session.update_card(card['id'], updates)
+        else:
+            project = session.find_project_by_name(project_name)
+            card = session.create_card(project, updates)
+        # Set the card state
+        card = session.set_card_state(card['id'], state)
+        # Set the card model
+        if model_name:
+            card = session.set_card_model(
+                card['id'],
+                session.find_card_model_by_name(project['id'], model_name)['id']
+            )
+        else:
+            card = session.set_card_model(card['id'], None)
         # Process the groups
-        for group in groups:
-            card.setdefault('groups', []).append(
-                session.add_card_to_group(card, group['type'], group['name'])
-            )
-        # Process the attributes
-        for attr in attributes:
-            card.setdefault('attributes', []).append(
-                session.append_attribute_value(
-                    card,
-                    attr['name'],
-                    attr['value']
-                )
-            )
+        for group in groups_add:
+            card = session.add_card_to_group(card, group['type'], group['name'])
+        for group in groups_remove:
+            card = session.remove_card_from_group(card, group['type'], group['name'])
+        # Attach any links
+        for link in links:
+            card = session.attach_link_to_card(card, link)
         return card
     return func
