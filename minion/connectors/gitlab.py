@@ -6,10 +6,20 @@ import functools
 
 import requests
 
-from ..core import function as minion_function, Connector
+from ..core import function as minion_function
+from .rest import Connection, Resource
 
 
-class Session(Connector):
+class Issue(Resource):
+    endpoint = "issues"
+
+
+class Project(Resource):
+    endpoint = "projects"
+    issues = Issue.manager()
+
+
+class Session(Connection):
     class Auth(requests.auth.AuthBase):
         """
         Requests authentication provider for GitLab API requests.
@@ -18,58 +28,15 @@ class Session(Connector):
             self.api_token = api_token
 
         def __call__(self, req):
-            req.headers.update({
-                'Authorization': 'Bearer {}'.format(self.api_token)
-            })
+            req.headers.update({ 'Authorization': f"Bearer {self.api_token}" })
             return req
 
-    def __init__(self, name, url, api_token):
-        super().__init__(name)
-        self._base_url = url
-        self._session = requests.Session()
-        self._session.auth = self.Auth(api_token)
+    def __init__(self, name, url, api_token, verify_ssl = True):
+        api_base = url.rstrip('/') + "/api/v4"
+        super().__init__(name, api_base, self.Auth(api_token), verify_ssl)
 
-    def url(self, url):
-        """
-        Prepend the API root to the given URL.
-        """
-        return f"{self._base_url}/api/v4{url}"
-
-    def as_json(self, response):
-        """
-        Parse the response as JSON and return the result.
-        """
-        response.raise_for_status()
-        return response.json()
-
-    @functools.lru_cache()
-    def project_id_for_name(self, name):
-        """
-        Returns the project ID for a project name.
-        """
-        namespace, project_name = name.split("/", maxsplit = 1)
-        projects = self.as_json(self._session.get(
-            self.url("/projects"),
-            params = dict(search = project_name)
-        ))
-        project = next(p for p in projects if p['path_with_namespace'] == name)
-        return project['id']
-
-    def issues_assigned_to_user(self):
-        """
-        Returns the issues assigned to the user.
-        """
-        return self.as_json(self._session.get(
-            self.url("/issues"),
-            params = dict(scope = "assigned_to_me")
-        ))
-
-    def issues_for_project(self, project_name):
-        """
-        Returns the open issues for the given project.
-        """
-        project_id = self.project_id_for_name(project_name)
-        return self.as_json(self._session.get(self.url(f"/projects/{project_id}/issues")))
+    projects = Project.manager()
+    issues = Issue.manager()
 
 
 @minion_function
@@ -78,7 +45,7 @@ def issues_assigned_to_user(session):
     Returns a function that ignores its arguments and returns a list of issues
     assigned to the user.
     """
-    return lambda *args: session.issues_assigned_to_user()
+    return lambda *args: session.issues.fetch_all(scope = "assigned_to_me")
 
 
 @minion_function
@@ -87,4 +54,10 @@ def issues_for_project(session, project_name):
     Returns a function that ignores its arguments and returns a list of
     issues for the given project.
     """
-    return lambda *args: session.issues_for_project(project_name)
+    return lambda *args: (
+        session
+            .projects
+            .fetch_one_by_path_with_namespace(project_name)
+            .issues
+            .fetch_all()
+    )

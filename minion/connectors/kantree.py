@@ -7,10 +7,144 @@ import functools
 
 import requests
 
-from ..core import function as minion_function, Connector
+from ..core import function as minion_function
+from .rest import Connection, Resource, Manager
 
 
-class Session(Connector):
+KANTREE_API = "https://kantree.io/api/1.0"
+
+
+class Group(Resource):
+    endpoint = "groups"
+
+
+class GroupType(Resource):
+    endpoint = "group-types"
+    # Nested resources
+    groups = Group.manager()
+
+
+class Attribute(Resource):
+    endpoint = "attributes"
+
+
+class Model(Resource):
+    endpoint = "models"
+
+
+class CardManager(Manager):
+    def search(self, filters):
+        """
+        Search cards using the given filters.
+        """
+        data = self.connection.api_get("search", params = dict(filters = filters))
+        return tuple(self.resource(d) for d in data)
+
+    def create(self, project, **params):
+        data = self.connection.api_post(
+            f"cards/{project.top_level_card_id}/children",
+            params = params
+        )
+        return self.resource(data)
+
+    def set_card_model(self, card, model = None):
+        """
+        Sets the model of given card to the given model.
+        """
+        model_id = getattr(model, 'id', model)
+        params = dict(model_id = model_id) if model_id else dict()
+        return self.action(card, "model", params)
+
+    def set_card_state(self, card, state = 'undecided'):
+        """
+        Sets the state of the card.
+        """
+        return self.action(card, "state", dict(state = state))
+
+    def add_card_to_group(self, card, group):
+        group_id = getattr(group, 'id', group)
+        return self.action(card, "add-to-group", dict(group_id = group_id))
+
+    def remove_card_from_group(self, card, group):
+        group_id = getattr(group, 'id', group)
+        return self.action(card, "remove-from-group", dict(group_id = group_id))
+
+    def attach_link_to_card(self, card, url):
+        """
+        Ensures that the given URL is present as an attachment on the given card.
+        """
+        attr = card.project.attributes.fetch_one_by_name("Attachments")
+        # First, check if the link has already been attached
+        for card_attr in card.attributes:
+            # This isn't the correct attribute
+            if card_attr['id'] != attr.id:
+                continue
+            # If there is a URL that matches, we are done
+            if any(v['url'] == url for v in card_attr['value']):
+                break
+        else:
+            # Create the attribute via the card
+            data = (
+                card._attributes
+                    .fetch_one(attr.id, lazy = True)
+                    .action("append", dict(value = url))
+                    .data
+            )
+            card.attributes.append(data)
+        return card
+
+
+class Card(Resource):
+    manager_class = CardManager
+    endpoint = "cards"
+    # Nested resources
+    # cards contain attributes already, so we need to use a different name
+    _attributes = Attribute.manager()
+    groups = Group.manager()
+
+    @property
+    def project(self):
+        return self.manager.connection.projects.fetch_one(self.project_id, lazy = True)
+
+    def set_model(self, model = None):
+        return self.manager.set_card_model(self, model)
+
+    def set_state(self, state = 'undecided'):
+        return self.manager.set_card_state(self, state)
+
+    def add_to_group(self, group):
+        return self.manager.add_card_to_group(self, group)
+
+    def remove_from_group(self, group):
+        return self.manager.remove_card_from_group(self, group)
+
+    def attach_link(self, url):
+        return self.manager.attach_link_to_card(self, url)
+
+
+class ProjectManager(Manager):
+    def fetch_all(self, **params):
+        # For some bizarre reason, /projects doesn't fetch all projects, /projects/all does
+        # It takes no parameters, so we ignore them
+        return tuple(self.resource(d) for d in self.connection.api_get("projects/all"))
+
+
+class Project(Resource):
+    manager_class = ProjectManager
+    endpoint = "projects"
+    # Nested resources
+    attributes = Attribute.manager()
+    cards = Card.manager()
+    models = Model.manager()
+    group_types = GroupType.manager()
+
+    @property
+    def top_level_card(self):
+        # Return a lazy card resource for the top-level card
+        return self.manager.connection.cards.fetch_one(self.top_level_card_id, lazy = True)
+
+
+class Session(Connection):
     class Auth(requests.auth.AuthBase):
         """
         Requests authentication provider for Kantree API requests.
@@ -20,270 +154,16 @@ class Session(Connector):
             self.api_token = base64.b64encode(api_token.encode()).decode()
 
         def __call__(self, req):
-            req.headers.update({
-                'Authorization': 'Basic {}'.format(self.api_token)
-            })
+            req.headers.update({ 'Authorization': f'Basic {self.api_token}' })
             return req
 
     def __init__(self, name, api_token):
-        super().__init__(name)
-        self._session = requests.Session()
-        self._session.auth = self.Auth(api_token)
+        super().__init__(name, KANTREE_API, self.Auth(api_token))
 
-    def url(self, url):
-        """
-        Prepend the API root to the given URL.
-        """
-        return f"https://kantree.io/api/1.0{url}"
-
-    def as_json(self, response):
-        """
-        Parse the response as JSON and return the result.
-        """
-        response.raise_for_status()
-        return response.json()
-
-    def projects(self):
-        """
-        Returns a list of projects available to the user.
-        """
-        return self.as_json(self._session.get(self.url(f"/projects/all")))
-
-    @functools.lru_cache()
-    def find_project_by_id(self, id):
-        """
-        Finds a project by id.
-        """
-        return self.as_json(self._session.get(self.url(f"/projects/{id}")))
-
-    @functools.lru_cache()
-    def find_project_by_name(self, name):
-        """
-        Finds a project by name.
-        """
-        # Find the project from the list by name
-        try:
-            return next(p for p in self.projects() if p['title'] == name)
-        except StopIteration:
-            raise LookupError(f"Could not find project '{name}'")
-
-    def cards_assigned_to_user(self):
-        """
-        Returns a list of cards assigned to the user.
-        """
-        return self.as_json(
-            self._session.get(
-                self.url("/search"),
-                params = { 'filters': '@me' }
-            )
-        )
-
-    def cards_for_project(self, id, with_archived = True):
-        """
-        Returns a list of cards for the given project id.
-        """
-        return self.as_json(
-            self._session.get(
-                self.url(f"/projects/{id}/cards"),
-                params = dict(with_archived = with_archived)
-            )
-        )
-
-    @functools.lru_cache()
-    def find_or_create_group_type(self, project_id, name):
-        """
-        Find the group type in the given project, or create it if it doesn't
-        exist.
-        """
-        project = self.find_project_by_id(project_id)
-        try:
-            return next(gt for gt in project['group_types'] if gt['name'] == name)
-        except StopIteration:
-            return self.as_json(
-                self._session.post(
-                    self.url("/group-types"),
-                    params = dict(
-                        name = name,
-                        scope = "project",
-                        project_id = project_id,
-                        one_group_per_card = "false"
-                    )
-                )
-            )
-
-    @functools.lru_cache()
-    def find_groups_for_card(self, card_id, group_type_id = None):
-        """
-        Find the groups for the given card, optionally restricted by group type.
-        """
-        params = dict(type_id = group_type_id) if group_type_id is not None else {}
-        return self.as_json(
-            self._session.get(
-                self.url(f"/cards/{card_id}/groups"),
-                params = params
-            )
-        )
-
-    @functools.lru_cache()
-    def find_or_create_group(self, card_id, group_type_id, name):
-        """
-        Find the specified group in the given card of the given type, or create
-        it if it doesn't exist.
-        """
-        groups = self.find_groups_for_card(card_id, group_type_id)
-        try:
-            return next(g for g in groups if g['title'] == name)
-        except StopIteration:
-            return self.as_json(
-                self._session.post(
-                    self.url(f"/cards/{card_id}/groups"),
-                    params = dict(type_id = group_type_id, title = name)
-                )
-            )
-
-    @functools.lru_cache()
-    def find_project_attribute(self, project_id, name):
-        """
-        Finds an attribute in a project by name.
-        """
-        attrs = self.as_json(
-            self._session.get(self.url(f"/projects/{project_id}/attributes"))
-        )
-        return next((a for a in attrs if a['name'] == name), None)
-
-    @functools.lru_cache()
-    def find_card_model_attribute(self, model_id, name):
-        """
-        Finds an attribute in a model by name.
-        """
-        attrs = self.as_json(
-            self._session.get(self.url(f"/models/{model_id}/attributes"))
-        )
-        return next((a for a in attrs if a['name'] == name), None)
-
-    @functools.lru_cache()
-    def find_card_model_by_name(self, project_id, name):
-        """
-        Finds a card model in a project by name.
-        """
-        models = self.as_json(
-            self._session.get(
-                self.url(f"/projects/{project_id}/models")
-            )
-        )
-        try:
-            return next(model for model in models if model['name'] == name)
-        except StopIteration:
-            raise LookupError(f"Could not find card model '{name}'")
-
-    def create_card(self, project, card):
-        """
-        Creates a new card in the given project.
-        """
-        parent_id = project['top_level_card_id']
-        return self.as_json(
-            self._session.post(
-                self.url(f"/cards/{parent_id}/children"),
-                params = card
-            )
-        )
-
-    def update_card(self, card_id, patch):
-        """
-        Update the given card with the given patch.
-        """
-        return self.as_json(
-            self._session.put(
-                self.url(f"/cards/{card_id}"),
-                params = patch
-            )
-        )
-
-    def set_card_model(self, card_id, model_id):
-        if model_id:
-            params = dict(model_id = model_id)
-        else:
-            params = dict()
-        return self.as_json(
-            self._session.post(
-                self.url(f"/cards/{card_id}/model"),
-                params = params
-            )
-        )
-
-    def set_card_state(self, card_id, state = 'undecided'):
-        return self.as_json(
-            self._session.post(
-                self.url(f"/cards/{card_id}/state"),
-                params = dict(state = state)
-            )
-        )
-
-    def add_card_to_group(self, card, group_type, group_name):
-        """
-        Adds the card to the given group.
-        """
-        project = self.find_project_by_id(card['project_id'])
-        group_type = self.find_or_create_group_type(
-            project['id'],
-            group_type
-        )
-        group = self.find_or_create_group(
-            project['top_level_card_id'],
-            group_type['id'],
-            group_name
-        )
-        return self.as_json(
-            self._session.post(
-                self.url("/cards/{}/add-to-group".format(card['id'])),
-                params = dict(group_id = group['id'])
-            )
-        )
-
-    def remove_card_from_group(self, card, group_type, group_name):
-        """
-        Removes the card from the given group.
-        """
-        project = self.find_project_by_id(card['project_id'])
-        group_type = self.find_or_create_group_type(
-            project['id'],
-            group_type
-        )
-        group = self.find_or_create_group(
-            project['top_level_card_id'],
-            group_type['id'],
-            group_name
-        )
-        return self.as_json(
-            self._session.post(
-                self.url("/cards/{}/remove-from-group".format(card['id'])),
-                params = dict(group_id = group['id'])
-            )
-        )
-
-    def attach_link_to_card(self, card, url):
-        """
-        Appends the given value to the specified attribute for the specified card.
-        """
-        attr = self.find_project_attribute(card['project_id'], "Attachments")
-        # First, check if the link has already been attached
-        for card_attr in card['attributes']:
-            # This isn't the correct attribute
-            if card_attr['id'] != attr['id']:
-                continue
-            # If there is a URL that matches, we are done
-            if any(v['url'] == url for v in card_attr['value']):
-                return card
-        card.setdefault('attributes', []).append(self.as_json(
-            self._session.post(
-                self.url("/cards/{}/attributes/{}/append".format(
-                    card['id'],
-                    attr['id']
-                )),
-                params = dict(value = url)
-            )
-        ))
-        return card
+    projects = Project.manager()
+    cards = Card.manager()
+    models = Model.manager()
+    group_types = GroupType.manager()
 
 
 @minion_function
@@ -292,7 +172,7 @@ def cards_assigned_to_user(session):
     Returns a function that ignores its arguments and returns a list of cards
     assigned to the user.
     """
-    return lambda *args: session.cards_assigned_to_user()
+    return lambda *args: session.cards.search('@me')
 
 
 @minion_function
@@ -301,9 +181,11 @@ def cards_for_project(session, project_name, with_archived = True):
     Returns a function that ignores its arguments and returns a list of cards
     for the given project.
     """
-    return lambda *args: session.cards_for_project(
-        session.find_project_by_name(project_name)['id'],
-        with_archived
+    return lambda *args: (
+        session.projects
+            .fetch_one_by_title(project_name)
+            .cards
+            .fetch_all(with_archived = with_archived)
     )
 
 
@@ -314,38 +196,52 @@ def create_or_update_card(session, project_name):
     be ``None``, and either creates or updates the corresponding card in the given
     project.
     """
+    project = session.projects.fetch_one_by_title(project_name)
+    project_group_types = set(project.group_types.fetch_all())
+    project_groups = set(project.top_level_card.groups.fetch_all())
     def func(item):
         card, updates = item
         # We will deal with these later
-        model_name = updates.pop('model_name')
-        state = updates.pop('state') or 'undecided'
+        model_name = updates.pop('model_name', None)
+        state = updates.pop('state', None) or getattr(card, 'state', 'undecided')
         groups_add = updates.pop('groups_add', []) + updates.pop('groups', [])
         groups_remove = updates.pop('groups_remove', [])
         links = updates.pop('links', [])
         # Create or update the card
         if card:
-            project = session.find_project_by_id(card['project_id'])
-            card = session.update_card(card['id'], updates)
+            card = card.update(**updates)
         else:
-            project = session.find_project_by_name(project_name)
-            card = session.create_card(project, updates)
+            card = session.cards.create(project, **updates)
         # Set the card state
-        card = session.set_card_state(card['id'], state)
+        card = card.set_state(state)
         # Set the card model
         if model_name:
-            card = session.set_card_model(
-                card['id'],
-                session.find_card_model_by_name(project['id'], model_name)['id']
-            )
+            model = project.models.fetch_one_by_name(model_name)
         else:
-            card = session.set_card_model(card['id'], None)
+            model = None
+        card = card.set_model(model)
         # Process the groups
         for group in groups_add:
-            card = session.add_card_to_group(card, group['type'], group['name'])
+            try:
+                group_type = next(gt for gt in project_group_types if gt.name == group['type'])
+            except StopIteration:
+                group_type = project.group_types.create(name = group['type'], one_group_per_card = "false")
+                project_group_types.add(group_type)
+            try:
+                group = next(g for g in project_groups if g['title'] == group['name'] and g['type_id'] == group_type.id)
+            except StopIteration:
+                group = project.top_level_card.groups.create(type_id = group_type.id, title = group['name'])
+            card = card.add_to_group(group)
         for group in groups_remove:
-            card = session.remove_card_from_group(card, group['type'], group['name'])
+            try:
+                group_type = next(gt for gt in project_group_types if gt.name == group['type'])
+                group = next(g for g in project_groups if g['title'] == group['name'] and g['type_id'] == group_type.id)
+            except StopIteration:
+                # If the group type or group is not found, the card cannot be in it
+                continue
+            card = card.remove_from_group(group)
         # Attach any links
         for link in links:
-            card = session.attach_link_to_card(card, link)
+            card = card.attach_link(link)
         return card
     return func

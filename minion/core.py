@@ -229,6 +229,11 @@ class Job(collections.namedtuple('Job', ['name',
         template: The :class:`Template` that the job uses.
         values: The parameter values to be used when resolving template refs.
     """
+    class Exit(Exception):
+        """
+        Exception that can be raised to bail on a pipeline.
+        """
+
     def run(self, connectors):
         """
         Runs the job using the given connectors.
@@ -236,13 +241,16 @@ class Job(collections.namedtuple('Job', ['name',
         Args:
             connectors: The connectors to use, indexed by name.
         """
-        result = self.template.resolve_refs(connectors, self.values)()
-        # If the result is an iterable, ensure it has run to completion
-        if not isinstance(result, str) and \
-           isinstance(result, collections.Iterable):
-            iterator = iter(result)
-            try:
-                while True:
-                    next(iterator)
-            except StopIteration:
-                pass
+        try:
+            result = self.template.resolve_refs(connectors, self.values)()
+            # If the result is an iterable, ensure it has run to completion
+            if not isinstance(result, str) and \
+               isinstance(result, collections.Iterable):
+                iterator = iter(result)
+                try:
+                    while True:
+                        next(iterator)
+                except StopIteration:
+                    pass
+        except self.Exit:
+            pass

@@ -4,11 +4,12 @@
 
 import functools
 import pprint
+import collections
 
 import jinja2
 import yaml
 
-from .core import function as minion_function
+from .core import function as minion_function, Job
 
 
 @minion_function
@@ -150,7 +151,25 @@ def expression(expression, globals = None):
 @minion_function
 def pretty_print():
     """
-    Function that pretty-prints the item using ``pprint.pprint`` before
-    returning it.
+    Returns a function that pretty-prints the incoming item using
+    ``pprint.pprint`` before returning it.
     """
-    return lambda item: pprint.pprint(item) or item
+    def func(item):
+        # Convert anything iterable to a list first
+        if isinstance(item, collections.Iterable) and not isinstance(item, str):
+            to_print = list(item)
+        else:
+            to_print = item
+        pprint.pprint(to_print)
+        return item
+    return func
+
+
+@minion_function
+def exit():
+    """
+    Returns a function that exits the pipeline.
+    """
+    def func(item):
+        raise Job.Exit()
+    return func
