@@ -40,8 +40,10 @@ class Conflict(Error):
     """Raised when a 409 Conflict occurs."""
 
 
-class EntityCache:
-    """Class for an entity cache."""
+class ResourceCache:
+    """
+    Class for a cache of resources.
+    """
     def __init__(self):
         self.data = dict()
         self.aliases = dict()
@@ -55,20 +57,20 @@ class EntityCache:
         except KeyError:
             return self.data[self.aliases[str(key)]]
 
-    def put(self, entity, *aliases):
-        cache_key = str(entity.__cache_key__)
-        # The entity itself is stored against the cache key
-        self.data[cache_key] = entity
+    def put(self, resource, *aliases):
+        cache_key = str(resource.primary_key)
+        # The resource itself is stored against the cache key
+        self.data[cache_key] = resource
         # The aliases reference the cache key
         self.aliases.update({ str(a): cache_key for a in aliases })
-        return entity
+        return resource
 
-    def evict(self, entity_or_key):
-        cache_key = str(getattr(entity_or_key, '__cache_key__', entity_or_key))
-        entity = self.data.pop(cache_key, None)
+    def evict(self, resource_or_key):
+        cache_key = str(getattr(resource_or_key, 'primary_key', resource_or_key))
+        resource = self.data.pop(cache_key, None)
         # Also evict any aliases that reference the cache key
         self.aliases = { k: v for k, v in self.aliases.items() if v != cache_key }
-        return entity
+        return resource
 
 
 class Connection(Connector):
@@ -82,6 +84,9 @@ class Connection(Connector):
         self.session.auth = auth
         self.api_base = api_base.rstrip('/')
         self.resources = {}
+        # We maintain caches for each resource on the connection so they can be
+        # shared with nested resources
+        self.caches = {}
 
     def api_request(self, method, path, *args, as_json = True, **kwargs):
         """
@@ -172,6 +177,8 @@ class Manager:
             )
             if root_manager_name:
                 self.root_manager = getattr(connection, root_manager_name)
+        # Use the cache from the connection as our cache
+        self.cache = connection.caches.setdefault(resource_class, ResourceCache())
 
     def list_endpoint(self):
         endpoint = self.resource_class.endpoint
@@ -180,13 +187,15 @@ class Manager:
         else:
             return endpoint
 
-    def single_endpoint(self, entity_or_key):
-        key = getattr(entity_or_key, 'primary_key', entity_or_key)
+    def single_endpoint(self, resource_or_key):
+        key = getattr(resource_or_key, 'primary_key', resource_or_key)
         return f"{self.list_endpoint()}/{key}"
 
     def resource(self, data, lazy = False):
         # The manager that goes with the resource should be the root manager if there is one
-        return self.resource_class(self.root_manager or self, data, lazy)
+        resource = self.resource_class(self.root_manager or self, data, lazy)
+        # If we are not lazy, put the resource into the cache before returning it
+        return resource if lazy else self.cache.put(resource)
 
     def fetch_all(self, **params):
         data = self.connection.api_get(self.list_endpoint(), params = params)
@@ -194,8 +203,8 @@ class Manager:
 
     def fetch_one(self, key, lazy = False):
         # Even if lazy is true, return any cached instance
-        # if self.cache.has(key):
-        #     return self.cache.get(key)
+        if self.cache.has(key):
+            return self.cache.get(key)
         if lazy:
             return self.resource({ self.resource_class.primary_key_name: key }, True)
         return self.resource(self.connection.api_get(self.single_endpoint(key)))
@@ -206,17 +215,16 @@ class Manager:
         # use of the cache
         # It is assumed that the attribute is only unique in the current context
         def fetch_one_by_attr(value, params = {}):
-            # cache_alias = f"{attr}/{value}"
-            # if self.context:
-            #     cache_alias = f"{self.context}/{cache_alias}"
-            # if self.cache.has(cache_alias):
-            #     return self.cache.get(cache_alias)
+            cache_alias = f"{attr}/{value}"
+            if self.context:
+                cache_alias = f"{self.context}/{cache_alias}"
+            if self.cache.has(cache_alias):
+                return self.cache.get(cache_alias)
             try:
                 resource = next(r for r in self.fetch_all(**params) if getattr(r, attr) == value)
             except StopIteration:
                 raise NotFound
-            return resource
-            # return self.cache.put(entity, cache_alias)
+            return self.cache.put(resource, cache_alias)
         return fetch_one_by_attr
 
     def __getattr__(self, name):
@@ -229,20 +237,20 @@ class Manager:
         data = self.connection.api_post(endpoint, json = params)
         return self.resource(data)
 
-    def update(self, entity_or_key, **params):
+    def update(self, resource_or_key, **params):
         # For update, don't use the context if we have one
-        endpoint = self.single_endpoint(entity_or_key)
+        endpoint = self.single_endpoint(resource_or_key)
         data = self.connection.api_put(endpoint, json = params)
         return self.resource(data)
 
-    def delete(self, entity_or_key):
+    def delete(self, resource_or_key):
         # For delete, don't use the context if we have one
-        endpoint = self.single_endpoint(entity_or_key)
+        endpoint = self.single_endpoint(resource_or_key)
         self.connection.api_delete(endpoint, as_json = False)
-        # self.cache.evict(entity_or_key)
+        self.cache.evict(resource_or_key)
 
-    def action(self, entity_or_key, action, params):
-        endpoint = self.single_endpoint(entity_or_key) + "/" + action
+    def action(self, resource_or_key, action, params):
+        endpoint = self.single_endpoint(resource_or_key) + "/" + action
         data = self.connection.api_post(endpoint, json = params)
         return self.resource(data)
 
