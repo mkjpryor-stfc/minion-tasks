@@ -47,32 +47,62 @@ class CardManager(Manager):
         )
         return self.resource(data)
 
-    def set_card_model(self, card, model = None):
+    def _card_or_id_to_card(self, card_or_id):
+        if isinstance(card_or_id, Card):
+            return card_or_id
+        elif self.cache.has(card_or_id):
+            return self.cache.get(card_or_id)
+        else:
+            return None
+
+    def set_card_model(self, card_or_id, model = None):
         """
         Sets the model of given card to the given model.
         """
+        card = self._card_or_id_to_card(card_or_id)
         model_id = getattr(model, 'id', model)
+        if card and card.model_id == model_id:
+            return card
         params = dict(model_id = model_id) if model_id else dict()
-        return self.action(card, "model", params)
+        return self.action(card_or_id, "model", params)
 
-    def set_card_state(self, card, state = 'undecided'):
+    def set_card_state(self, card_or_id, state = 'undecided'):
         """
         Sets the state of the card.
         """
-        return self.action(card, "state", dict(state = state))
+        card = self._card_or_id_to_card(card_or_id)
+        if card and card.state == state:
+            return card
+        return self.action(card_or_id, "state", dict(state = state))
 
-    def add_card_to_group(self, card, group):
+    def add_card_to_group(self, card_or_id, group):
         group_id = getattr(group, 'id', group)
-        return self.action(card, "add-to-group", dict(group_id = group_id))
+        card = self._card_or_id_to_card(card_or_id)
+        if card:
+            for card_group in card.groups:
+                if card_group['id'] == group_id:
+                    return card
+        return self.action(card_or_id, "add-to-group", dict(group_id = group_id))
 
-    def remove_card_from_group(self, card, group):
+    def remove_card_from_group(self, card_or_id, group):
         group_id = getattr(group, 'id', group)
-        return self.action(card, "remove-from-group", dict(group_id = group_id))
+        card = self._card_or_id_to_card(card_or_id)
+        if card:
+            for card_group in card.groups:
+                if card_group['id'] == group_id:
+                    break
+            else:
+                return card
+        return self.action(card_or_id, "remove-from-group", dict(group_id = group_id))
 
-    def attach_link_to_card(self, card, url):
+    def attach_link_to_card(self, card_or_id, url):
         """
         Ensures that the given URL is present as an attachment on the given card.
         """
+        if isinstance(card_or_id, Card):
+            card = card_or_id
+        else:
+            card = self.fetch_one(card_or_id)
         attr = card.project.attributes.fetch_one_by_name("Attachments")
         # First, check if the link has already been attached
         for card_attr in card.attributes:
@@ -85,7 +115,7 @@ class CardManager(Manager):
         else:
             # Create the attribute via the card
             data = (
-                card._attributes
+                card.attributes_
                     .fetch_one(attr.id, lazy = True)
                     .action("append", dict(value = url))
                     .data
@@ -98,9 +128,9 @@ class Card(Resource):
     manager_class = CardManager
     endpoint = "cards"
     # Nested resources
-    # cards contain attributes already, so we need to use a different name
-    _attributes = Attribute.manager()
-    groups = Group.manager()
+    # cards have attributes and groups properties already, so the managers need different names
+    attributes_ = Attribute.manager()
+    groups_ = Group.manager()
 
     @property
     def project(self):
@@ -198,7 +228,7 @@ def create_or_update_card(session, project_name):
     """
     project = session.projects.fetch_one_by_title(project_name)
     project_group_types = set(project.group_types.fetch_all())
-    project_groups = set(project.top_level_card.groups.fetch_all())
+    project_groups = set(project.top_level_card.groups_.fetch_all())
     def func(item):
         card, patch = item
         # We will deal with these later
@@ -213,37 +243,45 @@ def create_or_update_card(session, project_name):
         links = patch.pop('links', [])
         # Create or update the card
         if card:
-            # Remove elements from the patch that match the card
-            patch = { k: v for k, v in patch if card[k] == v }
-            # Only update the card if there are any updates
-            if patch:
-                card = card.update(**patch)
+            card = card.update(**patch)
         else:
             card = session.cards.create(project, **patch)
         # Set the card state
-        card = card.set_state(state)
-        # Set the card model
-        if model_name:
-            model = project.models.fetch_one_by_name(model_name)
-        else:
-            model = None
-        card = card.set_model(model)
+        if has_state:
+            card = card.set_state(state)
+        if has_model_name:
+            card = card.set_model(project.models.fetch_one_by_name(model_name))
         # Process the groups
         for group in groups_add:
             try:
                 group_type = next(gt for gt in project_group_types if gt.name == group['type'])
             except StopIteration:
-                group_type = project.group_types.create(name = group['type'], one_group_per_card = "false")
+                group_type = project.group_types.create(
+                    name = group['type'],
+                    one_group_per_card = "false"
+                )
                 project_group_types.add(group_type)
             try:
-                group = next(g for g in project_groups if g['title'] == group['name'] and g['type_id'] == group_type.id)
+                group = next(
+                    g
+                    for g in project_groups
+                    if g['title'] == group['name'] and g['type_id'] == group_type.id
+                )
             except StopIteration:
-                group = project.top_level_card.groups.create(type_id = group_type.id, title = group['name'])
+                group = project.top_level_card.groups_.create(
+                    type_id = group_type.id,
+                    title = group['name']
+                )
+                project_groups.add(group)
             card = card.add_to_group(group)
         for group in groups_remove:
             try:
                 group_type = next(gt for gt in project_group_types if gt.name == group['type'])
-                group = next(g for g in project_groups if g['title'] == group['name'] and g['type_id'] == group_type.id)
+                group = next(
+                    g
+                    for g in project_groups
+                    if g['title'] == group['name'] and g['type_id'] == group_type.id
+                )
             except StopIteration:
                 # If the group type or group is not found, the card cannot be in it
                 continue

@@ -193,9 +193,7 @@ class Manager:
 
     def resource(self, data, lazy = False):
         # The manager that goes with the resource should be the root manager if there is one
-        resource = self.resource_class(self.root_manager or self, data, lazy)
-        # If we are not lazy, put the resource into the cache before returning it
-        return resource if lazy else self.cache.put(resource)
+        return self.cache.put(self.resource_class(self.root_manager or self, data, lazy))
 
     def fetch_all(self, **params):
         data = self.connection.api_get(self.list_endpoint(), params = params)
@@ -238,13 +236,23 @@ class Manager:
         return self.resource(data)
 
     def update(self, resource_or_key, **params):
-        # For update, don't use the context if we have one
+        # Check if there are actually any updates to apply
+        # If we were given a key, check if there is a cached resource to compare with
+        if isinstance(resource_or_key, Resource):
+            resource = resource_or_key
+        elif self.cache.has(resource_or_key):
+            resource = self.cache.get(resource_or_key)
+        else:
+            resource = None
+        if resource:
+            params = { k: v for k, v in params.items() if resource[k] != v }
+            if not params:
+                return resource
         endpoint = self.single_endpoint(resource_or_key)
         data = self.connection.api_put(endpoint, json = params)
         return self.resource(data)
 
     def delete(self, resource_or_key):
-        # For delete, don't use the context if we have one
         endpoint = self.single_endpoint(resource_or_key)
         self.connection.api_delete(endpoint, as_json = False)
         self.cache.evict(resource_or_key)
