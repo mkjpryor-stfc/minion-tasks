@@ -202,7 +202,8 @@ class Manager:
     def fetch_one(self, key, lazy = False):
         # Even if lazy is true, return any cached instance
         if self.cache.has(key):
-            return self.cache.get(key)
+            # Return a new resource with this manager as it's manager
+            return self.resource(self.cache.get(key).data)
         if lazy:
             return self.resource({ self.resource_class.primary_key_name: key }, True)
         return self.resource(self.connection.api_get(self.single_endpoint(key)))
@@ -217,7 +218,8 @@ class Manager:
             if self.context:
                 cache_alias = f"{self.context}/{cache_alias}"
             if self.cache.has(cache_alias):
-                return self.cache.get(cache_alias)
+                # Return a new resource with this manager as it's manager
+                return self.resource(self.cache.get(cache_alias).data)
             try:
                 resource = next(r for r in self.fetch_all(**params) if getattr(r, attr) == value)
             except StopIteration:
@@ -241,7 +243,7 @@ class Manager:
         if isinstance(resource_or_key, Resource):
             resource = resource_or_key
         elif self.cache.has(resource_or_key):
-            resource = self.cache.get(resource_or_key)
+            resource = self.resource(self.cache.get(resource_or_key).data)
         else:
             resource = None
         if resource:
@@ -306,7 +308,7 @@ class Resource:
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(f"No such attribute '{name}'")
+            raise AttributeError(name)
 
     def update(self, **params):
         """

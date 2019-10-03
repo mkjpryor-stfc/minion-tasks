@@ -4,104 +4,97 @@ Connectors for the Help Scout API.
 
 import base64
 import functools
+import time
+from datetime import datetime, timedelta
 
 import requests
 
-from ..core import function as minion_function, Connector
+from ..core import function as minion_function
+from .rest import Connection, Resource, Manager
 
 
-class Session(Connector):
+HELPSCOUT_API = "https://api.helpscout.net/v2"
+
+
+class HelpscoutManager(Manager):
+    def fetch_all(self, **params):
+        # The Helpscout API uses HAL formatted responses
+        data = self.connection.api_get(self.list_endpoint(), params = params)
+        resource_data = data['_embedded'][self.resource_class.endpoint]
+        return tuple(self.resource(d) for d in resource_data)
+
+
+class UserManager(HelpscoutManager):
+    def me(self):
+        return self.resource(self.connection.api_get("users/me"))
+
+
+class User(Resource):
+    manager_class = UserManager
+    endpoint = "users"
+
+
+class Mailbox(Resource):
+    manager_class = HelpscoutManager
+    endpoint = "mailboxes"
+
+
+class Conversation(Resource):
+    manager_class = HelpscoutManager
+    endpoint = "conversations"
+
+
+class Session(Connection):
     class Auth(requests.auth.AuthBase):
         """
-        Requests authentication provider for Help Scout API requests.
+        Requests authentication provider for Github API requests.
         """
-        def __init__(self, api_token):
-            # The API uses Basic auth with the API key as the username and a
-            # dummy password
-            # So we need to base64-encode
-            self.api_token = base64.b64encode(f"{api_token}:X".encode()).decode()
+        def __init__(self, client_id, client_secret):
+            self.client_id = client_id
+            self.client_secret = client_secret
+            self.token = None
+            self.token_expires_at = None
 
         def __call__(self, req):
-            req.headers.update({
-                'Authorization': 'Basic {}'.format(self.api_token)
-            })
+            # Fetch a token with client credentials if required
+            if not self.token or time.time() >= self.token_expires_at:
+                response = requests.post(
+                    HELPSCOUT_API + "/oauth2/token",
+                    params = dict(
+                        grant_type = "client_credentials",
+                        client_id = self.client_id,
+                        client_secret = self.client_secret
+                    )
+                )
+                response.raise_for_status()
+                token_json = response.json()
+                self.token = token_json['access_token']
+                self.token_expires_at = time.time() + token_json['expires_in']
+            # Include the token in the auth header
+            req.headers.update({ 'Authorization': f"Bearer {self.token}" })
             return req
 
-    def __init__(self, name, api_token):
-        super().__init__(name)
-        self._session = requests.Session()
-        self._session.auth = self.Auth(api_token)
+    def __init__(self, name, client_id, client_secret):
+        super().__init__(name, HELPSCOUT_API, self.Auth(client_id, client_secret))
 
-    def url(self, url):
-        """
-        Prepend the API root to the given URL.
-        """
-        return f"https://api.helpscout.net/v1{url}"
-
-    def as_json(self, response):
-        """
-        Parse the response as JSON and return the result.
-        """
-        response.raise_for_status()
-        return response.json()
-
-    def _iter_pages(self, url):
-        page_num = 1
-        while True:
-            page = self.as_json(
-                self._session.get(url, params = { 'page': page_num })
-            )
-            yield from page['items']
-            if page_num >= page['pages']:
-                break
-            page_num += 1
-
-    @functools.lru_cache()
-    def authenticated_user(self):
-        """
-        Returns the authenticated user.
-        """
-        return self.as_json(self._session.get(self.url('/users/me.json')))['item']
-
-    def mailboxes(self):
-        """
-        Returns an iterable of all the available mailboxes.
-        """
-        return self._iter_pages(self.url('/mailboxes.json'))
-
-    @functools.lru_cache()
-    def find_mailbox_by_name(self, mailbox_name):
-        """
-        Find a mailbox by name.
-        """
-        try:
-            return next(
-                m
-                for m in self.mailboxes()
-                if m['name'] == mailbox_name
-            )
-        except StopIteration:
-            raise LookupError(f"Could not find mailbox '{mailbox_name}'")
-
-    def conversations_assigned_to_user(self, mailbox_id):
-        """
-        Returns a list of conversations assigned to the user in the given
-        mailbox.
-        """
-        user_id = self.authenticated_user()['id']
-        return self._iter_pages(
-            self.url(
-                f"/mailboxes/{mailbox_id}/users/{user_id}/conversations.json"
-            )
-        )
+    conversations = Conversation.manager()
+    mailboxes = Mailbox.manager()
+    users = User.manager()
 
 
 @minion_function
 def conversations_assigned_to_user(session, mailbox_name):
     """
     Returns a function that ignores its incoming arguments and returns a list
-    of conversations in the given mailbox assigned to the user.
+    of recently modified conversations in the given mailbox assigned to the user.
     """
-    return lambda *args: session.conversations_assigned_to_user(
-        session.find_mailbox_by_name(mailbox_name)['id']
-    )
+    def func(*args):
+        mailbox = session.mailboxes.fetch_one_by_name(mailbox_name)
+        user = session.users.me()
+        return session.conversations.fetch_all(
+            mailbox = mailbox.id,
+            assigned_to = user.id,
+            status = 'active,closed',
+            sortField = 'modifiedAt'
+        )
+    return func

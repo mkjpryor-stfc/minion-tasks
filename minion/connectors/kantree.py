@@ -51,9 +51,23 @@ class CardManager(Manager):
         if isinstance(card_or_id, Card):
             return card_or_id
         elif self.cache.has(card_or_id):
-            return self.cache.get(card_or_id)
+            return self.resource(self.cache.get(card_or_id).data)
         else:
             return None
+
+    def set_card_archived(self, card_or_id, archived):
+        """
+        Sets the archived state of the given card.
+        """
+        card = self._card_or_id_to_card(card_or_id)
+        if card and card.is_archived == archived:
+            return card
+        endpoint = self.single_endpoint(card_or_id) + "/archive"
+        if archived:
+            data = self.connection.api_post(endpoint)
+        else:
+            data = self.connection.api_delete(endpoint)
+        return self.resource(data)
 
     def set_card_model(self, card_or_id, model = None):
         """
@@ -135,6 +149,9 @@ class Card(Resource):
     @property
     def project(self):
         return self.manager.connection.projects.fetch_one(self.project_id, lazy = True)
+
+    def set_archived(self, archived):
+        return self.manager.set_card_archived(self, archived)
 
     def set_model(self, model = None):
         return self.manager.set_card_model(self, model)
@@ -232,12 +249,15 @@ def create_or_update_card(session, project_name):
     def func(item):
         card, patch = item
         # We will deal with these later
-        has_model_name = 'model_name' in patch
-        if has_model_name:
-            model_name = patch.pop('model_name')
+        has_archived = 'archived' in patch
+        if has_archived:
+            archived = patch.pop('archived')
         has_state = 'state' in patch
         if has_state:
             state = patch.pop('state')
+        has_model_name = 'model_name' in patch
+        if has_model_name:
+            model_name = patch.pop('model_name')
         groups_add = patch.pop('groups_add', []) + patch.pop('groups', [])
         groups_remove = patch.pop('groups_remove', [])
         links = patch.pop('links', [])
@@ -246,9 +266,13 @@ def create_or_update_card(session, project_name):
             card = card.update(**patch)
         else:
             card = session.cards.create(project, **patch)
+        # Set the archived state
+        if has_archived:
+            card = card.set_archived(archived)
         # Set the card state
         if has_state:
             card = card.set_state(state)
+        # Set the card model
         if has_model_name:
             card = card.set_model(project.models.fetch_one_by_name(model_name))
         # Process the groups
