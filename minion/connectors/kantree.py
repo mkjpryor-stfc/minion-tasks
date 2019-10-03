@@ -192,7 +192,7 @@ def cards_for_project(session, project_name, with_archived = True):
 @minion_function
 def create_or_update_card(session, project_name):
     """
-    Returns a function that accepts a ``(card, updates)`` tuple, where ``card`` can
+    Returns a function that accepts a ``(card, patch)`` tuple, where ``card`` can
     be ``None``, and either creates or updates the corresponding card in the given
     project.
     """
@@ -200,18 +200,26 @@ def create_or_update_card(session, project_name):
     project_group_types = set(project.group_types.fetch_all())
     project_groups = set(project.top_level_card.groups.fetch_all())
     def func(item):
-        card, updates = item
+        card, patch = item
         # We will deal with these later
-        model_name = updates.pop('model_name', None)
-        state = updates.pop('state', None) or getattr(card, 'state', 'undecided')
-        groups_add = updates.pop('groups_add', []) + updates.pop('groups', [])
-        groups_remove = updates.pop('groups_remove', [])
-        links = updates.pop('links', [])
+        has_model_name = 'model_name' in patch
+        if has_model_name:
+            model_name = patch.pop('model_name')
+        has_state = 'state' in patch
+        if has_state:
+            state = patch.pop('state')
+        groups_add = patch.pop('groups_add', []) + patch.pop('groups', [])
+        groups_remove = patch.pop('groups_remove', [])
+        links = patch.pop('links', [])
         # Create or update the card
         if card:
-            card = card.update(**updates)
+            # Remove elements from the patch that match the card
+            patch = { k: v for k, v in patch if card[k] == v }
+            # Only update the card if there are any updates
+            if patch:
+                card = card.update(**patch)
         else:
-            card = session.cards.create(project, **updates)
+            card = session.cards.create(project, **patch)
         # Set the card state
         card = card.set_state(state)
         # Set the card model
