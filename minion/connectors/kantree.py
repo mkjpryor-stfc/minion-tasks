@@ -4,6 +4,7 @@ Connectors for the Kantree API.
 
 import base64
 import functools
+from urllib.parse import urlsplit, parse_qs, urlencode
 
 import requests
 
@@ -14,36 +15,61 @@ from .rest import Connection, Resource, Manager
 KANTREE_API = "https://kantree.io/api/1.0"
 
 
+class KantreeManager(Manager):
+    def next_page(self, response):
+        next_page = response.headers.get('X-Kantree-NextPage')
+        if next_page:
+            # Split the URL
+            url_parts = urlsplit(response.url)
+            # Parse the existing params into a dict
+            params = parse_qs(url_parts.query)
+            # Update the pages element
+            params.update(page = next_page)
+            # Update the url parts with the new query params
+            next_url_parts = url_parts._replace(query = urlencode(params, doseq = True))
+            return next_url_parts.geturl()
+        else:
+            return None
+
+
 class Group(Resource):
+    manager_class = KantreeManager
     endpoint = "groups"
 
 
 class GroupType(Resource):
+    manager_class = KantreeManager
     endpoint = "group-types"
     # Nested resources
     groups = Group.manager()
 
 
 class Attribute(Resource):
+    manager_class = KantreeManager
     endpoint = "attributes"
 
 
 class Model(Resource):
+    manager_class = KantreeManager
     endpoint = "models"
 
 
-class CardManager(Manager):
+class CardManager(KantreeManager):
     def search(self, filters):
         """
         Search cards using the given filters.
         """
-        data = self.connection.api_get("search", params = dict(filters = filters))
-        return tuple(self.resource(d) for d in data)
+        response = self.connection.api_get(
+            "search",
+            params = dict(filters = filters),
+            return_response = True
+        )
+        return self.resource_list(response)
 
     def create(self, project, **params):
         data = self.connection.api_post(
             f"cards/{project.top_level_card_id}/children",
-            params = params
+            json = params
         )
         return self.resource(data)
 
@@ -111,7 +137,7 @@ class CardManager(Manager):
 
     def attach_link_to_card(self, card_or_id, url):
         """
-        Ensures that the given URL is present as an attachment on the given card.
+        Attaches the given URL to the card.
         """
         if isinstance(card_or_id, Card):
             card = card_or_id
@@ -169,11 +195,12 @@ class Card(Resource):
         return self.manager.attach_link_to_card(self, url)
 
 
-class ProjectManager(Manager):
+class ProjectManager(KantreeManager):
     def fetch_all(self, **params):
         # For some bizarre reason, /projects doesn't fetch all projects, /projects/all does
         # It takes no parameters, so we ignore them
-        return tuple(self.resource(d) for d in self.connection.api_get("projects/all"))
+        response = self.connection.api_get("projects/all", return_response = True)
+        return self.resource_list(response)
 
 
 class Project(Resource):
@@ -292,6 +319,8 @@ def create_or_update_card(session, project_name):
                     if g['title'] == group['name'] and g['type_id'] == group_type.id
                 )
             except StopIteration:
+                print(group)
+                raise RuntimeError
                 group = project.top_level_card.groups_.create(
                     type_id = group_type.id,
                     title = group['name']

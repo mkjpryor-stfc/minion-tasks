@@ -11,16 +11,20 @@ from .rest import Connection, Resource, Manager
 GITHUB_API = "https://api.github.com"
 
 
-class IssueManager(Manager):
-    def fetch_all_for_repo(self, repo, **params):
-        endpoint = f"repos/{repo}/{self.resource_class.endpoint}"
-        data = self.connection.api_get(endpoint, params = params)
-        return tuple(self.resource(d) for d in data)
-
-
 class Issue(Resource):
-    manager_class = IssueManager
     endpoint = "issues"
+
+
+class RepositoryManager(Manager):
+    def fetch_one_by_full_name(self, full_name):
+        return self.resource(self.connection.api_get(f"repos/{full_name}"))
+
+
+class Repository(Resource):
+    manager_class = RepositoryManager
+    endpoint = "repositories"
+    # Nested resources
+    issues = Issue.manager()
 
 
 class Session(Connection):
@@ -42,6 +46,7 @@ class Session(Connection):
         super().__init__(name, GITHUB_API, self.Auth(api_token))
 
     issues = Issue.manager()
+    repositories = Repository.manager()
 
 
 @minion_function
@@ -59,4 +64,9 @@ def issues_for_repository(session, repository_name):
     Returns a function that ignores its arguments and returns a list of open
     issues for the given repository.
     """
-    return lambda *args: session.issues.fetch_all_for_repo(repository_name, state = 'all')
+    return lambda *args: (
+        session.repositories
+            .fetch_one_by_full_name(repository_name)
+            .issues
+            .fetch_all(state = 'all')
+    )

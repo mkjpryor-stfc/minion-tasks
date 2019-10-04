@@ -17,11 +17,13 @@ HELPSCOUT_API = "https://api.helpscout.net/v2"
 
 
 class HelpscoutManager(Manager):
-    def fetch_all(self, **params):
-        # The Helpscout API uses HAL formatted responses
-        data = self.connection.api_get(self.list_endpoint(), params = params)
-        resource_data = data['_embedded'][self.resource_class.endpoint]
-        return tuple(self.resource(d) for d in resource_data)
+    def extract_data(self, response):
+        # Helpscount uses HAL formatted responses
+        return response.json()['_embedded'][self.resource_class.endpoint]
+
+    def next_page(self, response):
+        # By default, use the links from the Link header
+        return response.json().get('_links', {}).get('next', {}).get('href')
 
 
 class UserManager(HelpscoutManager):
@@ -91,10 +93,12 @@ def conversations_assigned_to_user(session, mailbox_name):
     def func(*args):
         mailbox = session.mailboxes.fetch_one_by_name(mailbox_name)
         user = session.users.me()
+        # Just fetch conversations modified in the last 4 weeks
+        threshold = datetime.utcnow() - timedelta(days = 28)
         return session.conversations.fetch_all(
             mailbox = mailbox.id,
             assigned_to = user.id,
             status = 'active,closed',
-            sortField = 'modifiedAt'
+            modifiedSince = threshold.isoformat(timespec = 'seconds') + 'Z'
         )
     return func

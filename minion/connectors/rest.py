@@ -88,7 +88,7 @@ class Connection(Connector):
         # shared with nested resources
         self.caches = {}
 
-    def api_request(self, method, path, *args, as_json = True, **kwargs):
+    def api_request(self, method, path, *args, return_response = False, **kwargs):
         """
         Makes an API request with the given arguments.
         """
@@ -96,8 +96,8 @@ class Connection(Connector):
             api_url = path
         else:
             api_url = self.api_base + '/' + path
-        logger.info(f"REST API request: {method.upper()} {api_url}")
         response = getattr(self.session, method.lower())(api_url, *args, **kwargs)
+        logger.info(f"REST API request: {method.upper()} {response.url}")
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as exc:
@@ -113,10 +113,10 @@ class Connection(Connector):
                 raise Conflict
             else:
                 raise
-        if as_json:
-            return response.json()
+        if return_response:
+            return response
         else:
-            return response.text
+            return response.json()
 
     def api_get(self, *args, **kwargs):
         """
@@ -193,11 +193,43 @@ class Manager:
 
     def resource(self, data, lazy = False):
         # The manager that goes with the resource should be the root manager if there is one
-        return self.cache.put(self.resource_class(self.root_manager or self, data, lazy))
+        resource = self.resource_class(self.root_manager or self, data, lazy)
+        # Don't cache lazy resources
+        if lazy:
+            return resource
+        else:
+            return self.cache.put(resource)
+
+    def extract_data(self, response):
+        # By default, just use the repsonse JSON
+        return response.json()
+
+    def next_page(self, response):
+        # By default, use the links from the Link header
+        return response.links.get('next', {}).get('url')
+
+    def resource_list(self, response):
+        # Paginate the response
+        # We use a generator to avoid downloading pages that we might not need
+        while True:
+            # Since we have already downloaded the data for the response,
+            # make sure that the resources are cached before yielding
+            resources = [self.resource(d) for d in self.extract_data(response)]
+            yield from resources
+            # Once the response has been exhausted, check for a next page
+            next_url = self.next_page(response)
+            if next_url:
+                response = self.connection.api_get(next_url, return_response = True)
+            else:
+                break
 
     def fetch_all(self, **params):
-        data = self.connection.api_get(self.list_endpoint(), params = params)
-        return tuple(self.resource(d) for d in data)
+        response = self.connection.api_get(
+            self.list_endpoint(),
+            params = params,
+            return_response = True
+        )
+        return self.resource_list(response)
 
     def fetch_one(self, key, lazy = False):
         # Even if lazy is true, return any cached instance
@@ -256,7 +288,7 @@ class Manager:
 
     def delete(self, resource_or_key):
         endpoint = self.single_endpoint(resource_or_key)
-        self.connection.api_delete(endpoint, as_json = False)
+        self.connection.api_delete(endpoint)
         self.cache.evict(resource_or_key)
 
     def action(self, resource_or_key, action, params):
