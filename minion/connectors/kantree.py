@@ -319,8 +319,6 @@ def create_or_update_card(session, project_name):
                     if g['title'] == group['name'] and g['type_id'] == group_type.id
                 )
             except StopIteration:
-                print(group)
-                raise RuntimeError
                 group = project.top_level_card.groups_.create(
                     type_id = group_type.id,
                     title = group['name']
