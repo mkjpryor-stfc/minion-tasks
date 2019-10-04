@@ -73,6 +73,26 @@ class ResourceCache:
         return resource
 
 
+def with_cache(attribute_name):
+    """
+    Decorator for manager methods that allows them to benefit from the cache
+    for non-primary-key values.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(manager, value, *args, **kwargs):
+            cache_alias = f"{attribute_name}/{value}"
+            if manager.context:
+                cache_alias = f"{manager.context}/{cache_alias}"
+            if manager.cache.has(cache_alias):
+                # Return a new resource with the manager as it's manager
+                return manager.resource(manager.cache.get(cache_alias).data)
+            # Otherwise, fetch the resource and put it into the cache with the alias
+            return manager.cache.put(func(manager, value, *args, **kwargs), cache_alias)
+        return wrapper
+    return decorator
+
+
 class Connection(Connector):
     """
     Class for a connection to a REST API.
@@ -245,19 +265,13 @@ class Manager:
         # methods that allow fetching one resource by an attribute value while making
         # use of the cache
         # It is assumed that the attribute is only unique in the current context
-        def fetch_one_by_attr(value, params = {}):
-            cache_alias = f"{attr}/{value}"
-            if self.context:
-                cache_alias = f"{self.context}/{cache_alias}"
-            if self.cache.has(cache_alias):
-                # Return a new resource with this manager as it's manager
-                return self.resource(self.cache.get(cache_alias).data)
+        @with_cache(attr)
+        def fetch_one_by_attr(manager, value, params = {}):
             try:
-                resource = next(r for r in self.fetch_all(**params) if getattr(r, attr) == value)
+                return next(r for r in manager.fetch_all(**params) if getattr(r, attr) == value)
             except StopIteration:
                 raise NotFound
-            return self.cache.put(resource, cache_alias)
-        return fetch_one_by_attr
+        return lambda *args, **kwargs: fetch_one_by_attr(self, *args, **kwargs)
 
     def __getattr__(self, name):
         if not name.startswith("fetch_one_by_"):

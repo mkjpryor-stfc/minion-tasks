@@ -5,7 +5,7 @@ Connectors for the Github API v3.
 import requests
 
 from ..core import function as minion_function
-from .rest import Connection, Resource, Manager
+from .rest import Connection, Resource, Manager, with_cache
 
 
 GITHUB_API = "https://api.github.com"
@@ -16,6 +16,7 @@ class Issue(Resource):
 
 
 class RepositoryManager(Manager):
+    @with_cache("full_name")
     def fetch_one_by_full_name(self, full_name):
         return self.resource(self.connection.api_get(f"repos/{full_name}"))
 
