@@ -343,13 +343,13 @@ def job_create(ctx, name, values_file, values_str, interactive, template_name):
                 functools.reduce(
                     lambda v, p: { p: v },
                     reversed(parameter.name.split(".")),
-                    click.prompt(
+                    yaml.safe_load(click.prompt(
                         "Enter value",
                         show_default = False,
                         default = parameter.default
                             if parameter.default is not Parameter.NO_DEFAULT
                             else None
-                    )
+                    ))
                 )
             )
             click.echo("")
