@@ -80,11 +80,11 @@ def with_cache(attribute_name):
     """
     def decorator(func):
         @functools.wraps(func)
-        def wrapper(manager, value, *args, **kwargs):
+        def wrapper(manager, value, *args, force = False, **kwargs):
             cache_alias = f"{attribute_name}/{value}"
             if manager.context:
                 cache_alias = f"{manager.context}/{cache_alias}"
-            if manager.cache.has(cache_alias):
+            if manager.cache.has(cache_alias) and not force:
                 # Return a new resource with the manager as it's manager
                 return manager.resource(manager.cache.get(cache_alias).data)
             # Otherwise, fetch the resource and put it into the cache with the alias
@@ -251,9 +251,9 @@ class Manager:
         )
         return self.resource_list(response)
 
-    def fetch_one(self, key, lazy = False):
+    def fetch_one(self, key, lazy = False, force = False):
         # Even if lazy is true, return any cached instance
-        if self.cache.has(key):
+        if self.cache.has(key) and not force:
             # Return a new resource with this manager as it's manager
             return self.resource(self.cache.get(key).data)
         if lazy:
@@ -293,7 +293,7 @@ class Manager:
         else:
             resource = None
         if resource:
-            params = { k: v for k, v in params.items() if resource[k] != v }
+            params = { k: v for k, v in params.items() if getattr(resource, k) != v }
             if not params:
                 return resource
         endpoint = self.single_endpoint(resource_or_key)
@@ -336,23 +336,17 @@ class Resource:
         """
         return self.data[self.primary_key_name]
 
-    def __getitem__(self, key):
-        """
-        Returns the value of the given key using dictionary key syntax.
-        """
-        # If we are a lazy resource and don't have the data, try to load it
-        if key not in self.data and self.lazy:
-            self.data = self.manager.fetch_one(self.primary_key).data
-            # Once we have fetched the data, we are no longer lazy
-            self.lazy = False
-        return self.data[key]
-
     def __getattr__(self, name):
         """
         Returns the value of the given attribute.
         """
+        # If we are a lazy resource and don't have the data, try to load it
+        if name not in self.data and self.lazy:
+            self.data = self.manager.fetch_one(self.primary_key).data
+            # Once we have fetched the data, we are no longer lazy
+            self.lazy = False
         try:
-            return self[name]
+            return self.data[name]
         except KeyError:
             raise AttributeError(name)
 

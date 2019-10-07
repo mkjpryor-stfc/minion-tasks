@@ -316,7 +316,7 @@ def create_or_update_card(session, project_name):
                 group = next(
                     g
                     for g in project_groups
-                    if g['title'] == group['name'] and g['type_id'] == group_type.id
+                    if g.title == group['name'] and g.type_id == group_type.id
                 )
             except StopIteration:
                 group = project.top_level_card.groups_.create(
@@ -331,7 +331,7 @@ def create_or_update_card(session, project_name):
                 group = next(
                     g
                     for g in project_groups
-                    if g['title'] == group['name'] and g['type_id'] == group_type.id
+                    if g.title == group['name'] and g.type_id == group_type.id
                 )
             except StopIteration:
                 # If the group type or group is not found, the card cannot be in it
