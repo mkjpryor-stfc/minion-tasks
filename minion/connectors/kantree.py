@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, parse_qs, urlencode
 import requests
 
 from ..core import function as minion_function
-from .rest import Connection, Resource, Manager
+from .rest import Connection, Resource, Manager, RootResource, NestedResource
 
 
 KANTREE_API = "https://kantree.io/api/1.0"
@@ -36,12 +36,16 @@ class Group(Resource):
     manager_class = KantreeManager
     endpoint = "groups"
 
+    @property
+    def type(self):
+        return self.manager.connection.group_types.fetch_one(self.type_id)
+
 
 class GroupType(Resource):
     manager_class = KantreeManager
     endpoint = "group-types"
     # Nested resources
-    groups = Group.manager()
+    groups = NestedResource(Group)
 
 
 class Attribute(Resource):
@@ -169,8 +173,8 @@ class Card(Resource):
     endpoint = "cards"
     # Nested resources
     # cards have attributes and groups properties already, so the managers need different names
-    attributes_ = Attribute.manager()
-    groups_ = Group.manager()
+    attributes_ = NestedResource(Attribute)
+    groups_ = NestedResource(Group)
 
     @property
     def project(self):
@@ -207,10 +211,10 @@ class Project(Resource):
     manager_class = ProjectManager
     endpoint = "projects"
     # Nested resources
-    attributes = Attribute.manager()
-    cards = Card.manager()
-    models = Model.manager()
-    group_types = GroupType.manager()
+    attributes = NestedResource(Attribute)
+    cards = NestedResource(Card)
+    models = NestedResource(Model)
+    group_types = NestedResource(GroupType)
 
     @property
     def top_level_card(self):
@@ -234,10 +238,10 @@ class Session(Connection):
     def __init__(self, name, api_token):
         super().__init__(name, KANTREE_API, self.Auth(api_token))
 
-    projects = Project.manager()
-    cards = Card.manager()
-    models = Model.manager()
-    group_types = GroupType.manager()
+    projects = RootResource(Project)
+    cards = RootResource(Card)
+    models = RootResource(Model)
+    group_types = RootResource(GroupType)
 
 
 @minion_function
@@ -342,3 +346,8 @@ def create_or_update_card(session, project_name):
             card = card.attach_link(link)
         return card
     return func
+
+
+@minion_function
+def delete_card(session):
+    return lambda card: session.cards.delete(card)

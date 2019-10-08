@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import requests
 
 from ..core import function as minion_function
-from .rest import Connection, Resource, Manager
+from .rest import Connection, Resource, Manager, RootResource
 
 
 HELPSCOUT_API = "https://api.helpscout.net/v2"
@@ -79,9 +79,9 @@ class Session(Connection):
     def __init__(self, name, client_id, client_secret):
         super().__init__(name, HELPSCOUT_API, self.Auth(client_id, client_secret))
 
-    conversations = Conversation.manager()
-    mailboxes = Mailbox.manager()
-    users = User.manager()
+    conversations = RootResource(Conversation)
+    mailboxes = RootResource(Mailbox)
+    users = RootResource(User)
 
 
 @minion_function

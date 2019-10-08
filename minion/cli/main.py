@@ -337,13 +337,20 @@ def job_create(ctx, name, values_file, values_str, interactive, template_name):
                     "  Default: " +
                     textwrap.indent(str(parameter.default), "    ").strip()
                 )
+            def parse_user_input(input):
+                # Try to parse the input as YAML
+                # If it fails for any reason, return the input as-is
+                try:
+                    return yaml.safe_load(input)
+                except:
+                    return input
             _merge(
                 values,
                 # Create a dictionary with nesting based on "."s in param name
                 functools.reduce(
                     lambda v, p: { p: v },
                     reversed(parameter.name.split(".")),
-                    yaml.safe_load(click.prompt(
+                    parse_user_input(click.prompt(
                         "Enter value",
                         show_default = False,
                         default = parameter.default

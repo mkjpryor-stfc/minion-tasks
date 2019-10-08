@@ -190,8 +190,7 @@ class Manager:
                 (
                     k
                     for k, v in vars(type(connection)).items()
-                    if isinstance(v, ResourceManagerDescriptor)
-                        and v.resource_class is resource_class
+                    if isinstance(v, ResourceDescriptor) and v.resource_class is resource_class
                 ),
                 None
             )
@@ -375,13 +374,6 @@ class Resource:
         klass = self.__class__
         return f"{klass.__module__}.{klass.__qualname__}({repr(self.data)})"
 
-    @classmethod
-    def manager(cls):
-        """
-        Returns a property descriptor for a manager for the resource.
-        """
-        return ResourceManagerDescriptor(cls)
-
 
 # Register a method with the pretty printer for a resource
 def pprint_resource(printer, object, stream, indent, allowance, context, level):
@@ -405,7 +397,7 @@ def pprint_resource(printer, object, stream, indent, allowance, context, level):
 pprint.PrettyPrinter._dispatch[Resource.__repr__] = pprint_resource
 
 
-class ResourceManagerDescriptor:
+class ResourceDescriptor:
     def __init__(self, resource_class):
         self.resource_class = resource_class
 
@@ -413,28 +405,33 @@ class ResourceManagerDescriptor:
         self.name = name
 
     def __get__(self, instance, owner):
-        """
-        Returns the manager for the given instance.
-        """
-        # owner is either Connection or a subclass of Resource
-        # instance is the particular instance we are being called on
-        # We require an instance
+        # We do not allow access as a class property
         if not instance:
             raise AttributeError()
         # We create one manager per instance and cache it on the instance
         attribute = f"_resource_manager_{self.name}"
         if not hasattr(instance, attribute):
-            # How we get the connection and context depend on whether we are
-            # a root resource (on a Connection) or a nested resource (on a
-            # Resource)
-            if isinstance(instance, Resource):
-                connection = instance.manager.connection
-                context = instance.manager.single_endpoint(instance)
-            else:
-                connection = instance
-                context = None
             # Create a manager instance for the resource
-            manager = self.resource_class.manager_class(self.resource_class, connection, context)
+            manager = self._get_manager(instance)
             # Cache the manager instance
             setattr(instance, attribute, manager)
         return getattr(instance, attribute)
+
+    def _get_manager(self, instance):
+        raise NotImplementedError
+
+
+class RootResource(ResourceDescriptor):
+    def _get_manager(self, instance):
+        # The instance will be a connection for a root manager
+        return self.resource_class.manager_class(self.resource_class, instance)
+
+
+class NestedResource(ResourceDescriptor):
+    def _get_manager(self, instance):
+        # For a nested manager, the instance is a resource
+        return self.resource_class.manager_class(
+            self.resource_class,
+            instance.manager.connection,
+            instance.manager.single_endpoint(instance)
+        )

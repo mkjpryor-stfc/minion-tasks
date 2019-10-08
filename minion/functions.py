@@ -20,12 +20,11 @@ def compose(functions):
 
     The returned function can take any number of positional arguments.
     """
-    first, *rest = functions
-    return lambda *args: functools.reduce(lambda i, f: f(i), rest, first(*args))
+    return lambda *args: functools.reduce(lambda i, f: f(i), functions, next(iter(args), None))
 
 
 @minion_function
-def collect(function):
+def map(function):
     """
     Returns a function that accepts an iterable as the incoming item and returns
     a new iterable that is the result of applying the given function to each
@@ -35,7 +34,7 @@ def collect(function):
 
 
 @minion_function
-def select(predicate):
+def filter(predicate):
     """
     Returns a function that accepts an iterable as the incoming item and returns
     a new iterable containing only the items for which the given predicate
@@ -62,23 +61,6 @@ def zip_matching(matcher):
                     break
             else:
                 yield (item1, None)
-    return func
-
-
-@minion_function
-def where(condition, then, default = lambda item: item):
-    """
-    Returns a function that takes an iterable as the incoming item and returns
-    a new iterable where each item is the result of ``then`` for items for which
-    ``condition`` returns true and ``default`` otherwise. If not explicitly
-    given, ``default`` is the identity function.
-    """
-    def func(items):
-        for item in items:
-            if condition(item):
-                yield then(item)
-            else:
-                yield default(item)
     return func
 
 
@@ -115,13 +97,36 @@ def fork(functions):
 
 
 @minion_function
-def when(condition, then, default = identity):
+def case(cases, default = lambda item: item):
+    """
+    Returns a function that executes and returns the first matching case for
+    the incoming item. If no cases match, ``default`` is executed with the
+    item.
+
+    ``cases`` is a list where each element is a ``dict`` containing the keys
+    ``condition`` and ``function``. ``condition`` is called with the incoming
+    item and ``function`` is executed if ``condition`` returns ``True``.
+    """
+    def func(item):
+        for case in cases:
+            if case['condition'](item):
+                return case['function'](item)
+        else:
+            return default(item)
+    return func
+
+
+@minion_function
+def when(condition, then, default = lambda item: item):
     """
     Returns a function that evaluates the given condition for the incoming item
     and returns the result of executing ``then`` or ``default`` depending on
     whether the condition returns ``True`` or ``False``.
     """
     return lambda item: then(item) if condition(item) else default(item)
+
+
+jinja2_environment = jinja2.Environment(extensions=['jinja2.ext.loopcontrols'])
 
 
 @minion_function
@@ -132,7 +137,7 @@ def template(template, globals = None):
     result is parsed as YAML and returned.
     """
     globals = globals if globals is not None else {}
-    template = jinja2.Template(template)
+    template = jinja2_environment.from_string(template)
     return lambda item: yaml.safe_load(template.render(input = item, **globals))
 
 
@@ -144,7 +149,7 @@ def expression(expression, globals = None):
     the result.
     """
     globals = globals if globals is not None else {}
-    expression = jinja2.Environment().compile_expression(expression)
+    expression = jinja2_environment.compile_expression(expression)
     return lambda item: expression(input = item, **globals)
 
 

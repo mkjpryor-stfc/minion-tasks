@@ -7,7 +7,7 @@ import functools
 import requests
 
 from ..core import function as minion_function
-from .rest import Connection, Resource
+from .rest import Connection, Resource, RootResource, NestedResource
 
 
 class Issue(Resource):
@@ -16,7 +16,7 @@ class Issue(Resource):
 
 class Project(Resource):
     endpoint = "projects"
-    issues = Issue.manager()
+    issues = NestedResource(Issue)
 
 
 class Session(Connection):
@@ -35,8 +35,8 @@ class Session(Connection):
         api_base = url.rstrip('/') + "/api/v4"
         super().__init__(name, api_base, self.Auth(api_token), verify_ssl)
 
-    projects = Project.manager()
-    issues = Issue.manager()
+    projects = RootResource(Project)
+    issues = RootResource(Issue)
 
 
 @minion_function

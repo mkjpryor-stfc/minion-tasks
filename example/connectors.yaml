@@ -1,8 +1,0 @@
-github:
-  path: minion.connectors.github.Session
-  api_token: <github personal access token>
-
-trello:
-  path: minion.connectors.trello.Session
-  api_key: <trello api key>
-  api_token: <trello personal access token>

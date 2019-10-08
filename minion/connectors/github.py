@@ -5,7 +5,7 @@ Connectors for the Github API v3.
 import requests
 
 from ..core import function as minion_function
-from .rest import Connection, Resource, Manager, with_cache
+from .rest import Connection, Resource, Manager, with_cache, RootResource, NestedResource
 
 
 GITHUB_API = "https://api.github.com"
@@ -25,7 +25,7 @@ class Repository(Resource):
     manager_class = RepositoryManager
     endpoint = "repositories"
     # Nested resources
-    issues = Issue.manager()
+    issues = NestedResource(Issue)
 
 
 class Session(Connection):
@@ -46,8 +46,8 @@ class Session(Connection):
     def __init__(self, name, api_token):
         super().__init__(name, GITHUB_API, self.Auth(api_token))
 
-    issues = Issue.manager()
-    repositories = Repository.manager()
+    issues = RootResource(Issue)
+    repositories = RootResource(Repository)
 
 
 @minion_function
