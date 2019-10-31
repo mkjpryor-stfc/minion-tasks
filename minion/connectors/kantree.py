@@ -180,6 +180,13 @@ class Card(Resource):
     def project(self):
         return self.manager.connection.projects.fetch_one(self.project_id, lazy = True)
 
+    @property
+    def model(self):
+        if self.model_id:
+            return self.manager.connection.models.fetch_one(self.model_id)
+        else:
+            return None
+
     def set_archived(self, archived):
         return self.manager.set_card_archived(self, archived)
 
