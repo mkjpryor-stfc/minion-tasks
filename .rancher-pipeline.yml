@@ -1,9 +1,0 @@
-stages:
-- name: Build
-  steps:
-  - publishImageConfig:
-      dockerfilePath: ./Dockerfile
-      buildContext: .
-      tag: minion/minion:latest
-timeout: 60
-notification: {}
