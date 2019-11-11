@@ -371,13 +371,26 @@ def job_create(ctx, name, values_file, values_str, interactive, template_name):
 
 
 @job_group.command(name = "run")
-@click.argument('name')
+@click.option(
+    "-a",
+    "--all",
+    is_flag = True, default = False,
+    help = "Execute all jobs. Any specified names are ignored."
+)
+# Accept any number of names
+@click.argument('names', nargs = -1)
 @click.pass_obj
-def job_run(ctx, name):
+def job_run(ctx, all, names):
     """
     Run a job.
     """
-    ctx.jobs.find(name).run(ctx.connectors)
+    if all:
+        jobs = list(ctx.jobs.all())
+    else:
+        jobs = [ctx.jobs.find(name) for name in names]
+    for job in jobs:
+        click.echo(f"Executing job: {job.name}")
+        job.run(ctx.connectors)
 
 
 @job_group.command(name = "rm")
