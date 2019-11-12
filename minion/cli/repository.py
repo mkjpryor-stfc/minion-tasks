@@ -52,6 +52,9 @@ class RepositoryManager:
     """
     def __init__(self, directory):
         self.directory = directory.resolve()
+        # Ensure that the repo directory exists
+        self.directory.mkdir(parents = True, exist_ok = True)
+
 
     def _from_path(self, path):
         # We already know that the path is a (symlink to a) directory
@@ -99,8 +102,6 @@ class RepositoryManager:
         # depending on the value of the flag given
         source_path = pathlib.Path(repo_source)
         if source_path.is_dir():
-            # Ensure that the repo directory exists
-            self.directory.mkdir(parents = True, exist_ok = True)
             if copy:
                 # Recursively copy the source to the destination
                 shutil.copytree(source_path, repo_path)
