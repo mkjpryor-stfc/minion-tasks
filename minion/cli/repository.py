@@ -55,7 +55,6 @@ class RepositoryManager:
         # Ensure that the repo directory exists
         self.directory.mkdir(parents = True, exist_ok = True)
 
-
     def _from_path(self, path):
         # We already know that the path is a (symlink to a) directory
         # If it is a symlink, it is a local repository, even if the other end

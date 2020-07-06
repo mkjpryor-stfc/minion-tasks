@@ -10,7 +10,7 @@ a pipeline that can map, for example, issues in GitHub to cards in Trello.
 ## Installation
 
 ```
-pip install git+https://github.com/mkjpryor-stfc/minion-workflows.git
+pip install git+https://github.com/mkjpryor-stfc/minion-tasks.git
 ```
 
 It is recommended to install Minion into its own Python virtual environment.
