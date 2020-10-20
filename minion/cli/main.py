@@ -39,6 +39,8 @@ def main(ctx, debug, config_dir):
         format = "[%(levelname)s] [%(name)s] %(message)s",
         level = logging.DEBUG if debug else logging.INFO
     )
+    # Keep the urllib3 logger at warning only
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
     ctx.obj = context.Context(config_dir or click.get_app_dir("minion"))
 
 
