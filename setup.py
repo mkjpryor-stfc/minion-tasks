@@ -31,8 +31,8 @@ if __name__ == "__main__":
             'coolname',
             'jinja2',
             'pyyaml',
-            'requests',
             'dulwich',
+            'rackit',
         ],
         entry_points = {
             'console_scripts': ['minion = minion.cli.main:main']

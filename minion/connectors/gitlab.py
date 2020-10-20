@@ -1,63 +1,122 @@
 """
-Connectors for the Github API v3.
+Minion connector for GitLab.
 """
-
-import functools
 
 import requests
 
-from ..core import function as minion_function
-from .rest import Connection, Resource, RootResource, NestedResource
+from rackit import (
+    Connection,
+    ResourceManager as BaseResourceManager,
+    Resource as BaseResource,
+    RootResource,
+    NestedResource,
+    RelatedResource
+)
+
+from ..core import Connector, function as minion_function
+
+
+class ResourceManager(BaseResourceManager):
+    def extract_list(self, response):
+        next_page = response.links.get('next', {}).get('url')
+        return response.json(), next_page
+
+
+class Resource(BaseResource):
+    class Meta:
+        manager_cls = ResourceManager
+        update_http_verb = 'put'
+
+
+class LinkManager(ResourceManager):
+    def create(self, params = None, **kwargs):
+        # Creating a link doesn't return anything sensible (boo!!)
+        params = params.copy() if params else dict()
+        params.update(kwargs)
+        params = self.prepare_params(params)
+        self.connection.api_post(self.prepare_url(), json = params)
+
+
+class Link(Resource):
+    class Meta:
+        manager_cls = LinkManager
+        endpoint = '/links'
+
+
+class IssueManager(ResourceManager):
+    def canonical_manager(self, data):
+        # The canonical manager for issues is the project issue manager
+        return self.related_manager(Project).get(data['project_id']).issues
 
 
 class Issue(Resource):
-    endpoint = "issues"
+    class Meta:
+        manager_cls = IssueManager
+        endpoint = '/issues'
+        primary_key_field = 'iid'
+
+    project = RelatedResource('Project', 'project_id')
+    links = NestedResource(Link)
 
 
 class Project(Resource):
-    endpoint = "projects"
+    class Meta:
+        endpoint = "/projects"
+
     issues = NestedResource(Issue)
 
 
-class Session(Connection):
+class Session(Connection, Connector):
     class Auth(requests.auth.AuthBase):
-        """
-        Requests authentication provider for GitLab API requests.
-        """
-        def __init__(self, api_token):
-            self.api_token = api_token
+        def __init__(self, token):
+            self.token = token
 
-        def __call__(self, req):
-            req.headers.update({ 'Authorization': f"Bearer {self.api_token}" })
-            return req
+        def __call__(self, request):
+            # Add the correctly formatted header to the request
+            request.headers['Authorization'] = "Bearer {}".format(self.token)
+            return request
 
-    def __init__(self, name, url, api_token, verify_ssl = True):
-        api_base = url.rstrip('/') + "/api/v4"
-        super().__init__(name, api_base, self.Auth(api_token), verify_ssl)
+    path_prefix = '/api/v4'
 
+    # Register the root resources
     projects = RootResource(Project)
     issues = RootResource(Issue)
 
+    def __init__(self, name, url, api_token, verify_ssl = True):
+        self.name = name
+        # Build the session to pass to the connection
+        session = requests.Session()
+        session.auth = self.Auth(api_token)
+        session.verify = verify_ssl
+        # Call the superclass method to initialise the connection
+        super().__init__(url, session)
+
 
 @minion_function
-def issues_assigned_to_user(session):
+def issues(session, **kwargs):
     """
-    Returns a function that ignores its arguments and returns a list of issues
-    assigned to the user.
+    Returns a function that returns a list of issues with the given kwargs as URL parameters.
     """
-    return lambda *args: session.issues.fetch_all(scope = "assigned_to_me")
+    return lambda *args: session.issues.all(**kwargs)
 
 
 @minion_function
-def issues_for_project(session, project_name):
+def project_issues(session, project):
     """
-    Returns a function that ignores its arguments and returns a list of
-    issues for the given project.
+    Returns a function that returns a list of issues for the given project.
     """
-    return lambda *args: (
-        session
-            .projects
-            .fetch_one_by_path_with_namespace(project_name)
-            .issues
-            .fetch_all()
-    )
+    return lambda *args: session.projects.find_by_path_with_namespace(project).issues.all()
+
+
+@minion_function
+def create_or_update_issue(session, project):
+    """
+    Returns a function that creates or updates an issue in the given project.
+    """
+    def func(item):
+        issue, patch = item
+        if issue:
+            return issue._update(patch)
+        else:
+            return session.projects.find_by_path_with_namespace(project).issues.create(patch)
+    return func
